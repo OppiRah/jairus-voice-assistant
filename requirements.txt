@@ -1,0 +1,9 @@
+openwakeword
+sounddevice
+numpy
+faster-whisper
+requests
+playwright
+pyttsx3
+pywin32
+pygame

@@ -1,0 +1,10 @@
+# Virtual environment — regenerable from requirements.txt
+venv/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+
+# Brave browser profile used for CDP automation.
+# Contains cookies / session / login data — must never be committed.
+browser_profile/
