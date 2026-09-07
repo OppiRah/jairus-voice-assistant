@@ -38,6 +38,19 @@ from player_action import (
 from tts import speak
 from context import ConversationContext
 
+# --- Jairus migration (Phase 3): make src/ importable so this loop can hand
+# commands to the new application layer while all existing logic stays put. ---
+import os
+import sys
+import uuid
+
+_SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from jairus.application.commands.command_gateway import submit_command
+from jairus.domain.commands import CommandSource
+
 # ---- config ----
 # openWakeWord only ships a pretrained acoustic model for "hey jarvis" — there's no
 # pretrained "hey jairus" model, so this stays "hey_jarvis" even though the assistant
@@ -111,6 +124,7 @@ def run_assistant(state):
     oww_model = Model(wakeword_models=[WAKE_WORD_MODEL])
     wake_key = _wake_word_key()
     context = ConversationContext()
+    conversation_id = str(uuid.uuid4())  # one per program run; ConversationContext also resets per run
 
     print(f"[ready] listening for wake word: '{wake_key.replace('_', ' ')}'")
     print("        say it, then say your command, e.g.:")
@@ -155,7 +169,7 @@ def run_assistant(state):
                 print(f"[transcript] {text}")
 
                 if text.strip():
-                    handle_command(text, context, state)
+                    submit_command(text, CommandSource.VOICE, context, state, conversation_id)
                 else:
                     print("[skip] heard nothing usable, going back to sleep")
 
