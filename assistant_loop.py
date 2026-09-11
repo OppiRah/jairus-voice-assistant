@@ -48,8 +48,7 @@ _SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from jairus.application.commands.command_gateway import submit_command
-from jairus.domain.commands import CommandSource
+from jairus.interfaces.voice import submit_voice_command
 
 # --- Jairus migration (Phase 11): shadow-mode Agent Core. Runs ALONGSIDE the
 # real path above, in dry-run mode only -- it observes and logs what the new
@@ -218,7 +217,7 @@ def run_assistant(state):
                 print(f"[transcript] {text}")
 
                 if text.strip():
-                    submit_command(text, CommandSource.VOICE, context, state, conversation_id)
+                    submit_voice_command(text, context, state, conversation_id)
                     _shadow_evaluate(text)  # Phase 11: dry-run only, observes/logs, never executes
                 else:
                     print("[skip] heard nothing usable, going back to sleep")
