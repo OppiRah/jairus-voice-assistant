@@ -19,12 +19,17 @@ try/except/``ToolResult`` shape — there was no existing app-control code
 to wrap, so Phase 7 wrote it, then exposed it here identically to how the
 media tools are exposed.
 
+Phase 8 (Part 14.10) adds the five ``browser.*`` tools, mapped to
+``jairus.infrastructure.automation.browser`` the same way again. That
+module reuses ``player_action.py``'s existing Playwright/CDP connection
+rather than opening a second one — see its own docstring.
+
 Per the architecture's own sequencing — "Introduce the Real Agent Loop" is
-Part 14.10 and "Remove legacy intent routing" is Part 14.11, both AFTER
+Part 14.12 and "Remove legacy intent routing" is Part 14.13, both AFTER
 this phase — there is no Agent Core yet to decide which tool to call, and
 nothing here wires ``execute_tool()`` into ``handle_command()``'s live
 dispatch. It is complete and tested standalone but uncalled by the running
-assistant; see TOOL_EXECUTOR.md and APPS_TOOLS.md.
+assistant; see TOOL_EXECUTOR.md, APPS_TOOLS.md, and BROWSER_TOOLS.md.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     # reasoning command_gateway.py uses for its lazy `handle_command` import.
     import player_action
     from jairus.infrastructure.automation import apps
+    from jairus.infrastructure.automation import browser as browser_automation
 
     def run_play(arguments: dict[str, Any]) -> None:
         # play_song() expects an intent-shaped dict with "title"/"artist",
@@ -96,6 +102,21 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     def run_apps_list_running(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"apps": apps.list_running_apps()}
 
+    def run_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
+        return browser_automation.navigate(arguments.get("url", ""))
+
+    def run_browser_search(arguments: dict[str, Any]) -> dict[str, Any]:
+        return browser_automation.search(arguments.get("query", ""))
+
+    def run_browser_get_current_page(arguments: dict[str, Any]) -> dict[str, Any]:
+        return browser_automation.get_current_page()
+
+    def run_browser_back(arguments: dict[str, Any]) -> dict[str, Any]:
+        return browser_automation.go_back()
+
+    def run_browser_forward(arguments: dict[str, Any]) -> dict[str, Any]:
+        return browser_automation.go_forward()
+
     return {
         "media.play": run_play,
         "media.queue": run_queue,
@@ -111,21 +132,28 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
         "apps.focus": run_apps_focus,
         "apps.detect": run_apps_detect,
         "apps.list_running": run_apps_list_running,
+        "browser.navigate": run_browser_navigate,
+        "browser.search": run_browser_search,
+        "browser.get_current_page": run_browser_get_current_page,
+        "browser.back": run_browser_back,
+        "browser.forward": run_browser_forward,
     }
 
 
 def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     """Runs a registered tool by name, wrapping the matching
-    ``player_action.py`` function (``media.*``) or
-    ``jairus.infrastructure.automation.apps`` function (``apps.*``).
+    ``player_action.py`` function (``media.*``),
+    ``jairus.infrastructure.automation.apps`` function (``apps.*``), or
+    ``jairus.infrastructure.automation.browser`` function (``browser.*``).
 
     ``tool_name`` is looked up in the Tool Registry first (``get_tool()``
     from Phase 5) — a name that isn't registered there returns a
     ``ToolResult`` with ``success=False`` / ``failure_category=NOT_FOUND``
     without attempting to run anything. Note this means the registry must
     already be populated (e.g. by calling
-    ``jairus.tools.register_media_tools()`` and/or
-    ``jairus.tools.register_app_tools()``) before a call can succeed;
+    ``jairus.tools.register_media_tools()``,
+    ``jairus.tools.register_app_tools()``, and/or
+    ``jairus.tools.register_browser_tools()``) before a call can succeed;
     nothing in this module registers tools itself.
 
     A tool call that raises is caught and reported as
