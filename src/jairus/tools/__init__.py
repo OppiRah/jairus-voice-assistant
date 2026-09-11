@@ -6,6 +6,7 @@ from .browser_tools import BROWSER_TOOLS, register_browser_tools
 from .executor import execute_tool
 from .media_tools import MEDIA_TOOLS, register_media_tools
 from .registry import get_tool, list_tools, register_tool
+from .windows_tools import WINDOWS_TOOLS, register_windows_tools
 
 __all__ = [
     "register_tool",
@@ -17,5 +18,7 @@ __all__ = [
     "register_app_tools",
     "BROWSER_TOOLS",
     "register_browser_tools",
+    "WINDOWS_TOOLS",
+    "register_windows_tools",
     "execute_tool",
 ]

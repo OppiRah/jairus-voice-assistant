@@ -24,12 +24,18 @@ Phase 8 (Part 14.10) adds the five ``browser.*`` tools, mapped to
 module reuses ``player_action.py``'s existing Playwright/CDP connection
 rather than opening a second one — see its own docstring.
 
+Phase 9 (Part 14.11) adds the six ``windows.*`` tools, mapped to
+``jairus.infrastructure.automation.windows_ui`` (genuinely new — semantic
+Windows UI Automation via pywinauto, no coordinate clicking). Same
+try/except/``ToolResult`` shape once again.
+
 Per the architecture's own sequencing — "Introduce the Real Agent Loop" is
 Part 14.12 and "Remove legacy intent routing" is Part 14.13, both AFTER
 this phase — there is no Agent Core yet to decide which tool to call, and
 nothing here wires ``execute_tool()`` into ``handle_command()``'s live
 dispatch. It is complete and tested standalone but uncalled by the running
-assistant; see TOOL_EXECUTOR.md, APPS_TOOLS.md, and BROWSER_TOOLS.md.
+assistant; see TOOL_EXECUTOR.md, APPS_TOOLS.md, BROWSER_TOOLS.md, and
+WINDOWS_UI_TOOLS.md.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     import player_action
     from jairus.infrastructure.automation import apps
     from jairus.infrastructure.automation import browser as browser_automation
+    from jairus.infrastructure.automation import windows_ui
 
     def run_play(arguments: dict[str, Any]) -> None:
         # play_song() expects an intent-shaped dict with "title"/"artist",
@@ -117,6 +124,40 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     def run_browser_forward(arguments: dict[str, Any]) -> dict[str, Any]:
         return browser_automation.go_forward()
 
+    def run_windows_get_active_window(arguments: dict[str, Any]) -> dict[str, Any]:
+        return windows_ui.get_active_window()
+
+    def run_windows_list_windows(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"windows": windows_ui.list_windows()}
+
+    def run_windows_find_control(arguments: dict[str, Any]) -> dict[str, Any]:
+        return windows_ui.find_control(
+            arguments.get("window_title", ""),
+            arguments.get("control_name", ""),
+            arguments.get("control_type"),
+        )
+
+    def run_windows_invoke(arguments: dict[str, Any]) -> dict[str, Any]:
+        invoked = windows_ui.invoke_control(
+            arguments.get("window_title", ""),
+            arguments.get("control_name", ""),
+            arguments.get("control_type"),
+        )
+        return {"invoked": invoked}
+
+    def run_windows_type(arguments: dict[str, Any]) -> dict[str, Any]:
+        typed = windows_ui.type_into_control(
+            arguments.get("window_title", ""),
+            arguments.get("control_name", ""),
+            arguments.get("text", ""),
+            arguments.get("control_type"),
+        )
+        return {"typed": typed}
+
+    def run_windows_hotkey(arguments: dict[str, Any]) -> dict[str, Any]:
+        sent = windows_ui.send_hotkey(arguments.get("window_title", ""), arguments.get("keys", ""))
+        return {"sent": sent}
+
     return {
         "media.play": run_play,
         "media.queue": run_queue,
@@ -137,14 +178,21 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
         "browser.get_current_page": run_browser_get_current_page,
         "browser.back": run_browser_back,
         "browser.forward": run_browser_forward,
+        "windows.get_active_window": run_windows_get_active_window,
+        "windows.list_windows": run_windows_list_windows,
+        "windows.find_control": run_windows_find_control,
+        "windows.invoke": run_windows_invoke,
+        "windows.type": run_windows_type,
+        "windows.hotkey": run_windows_hotkey,
     }
 
 
 def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     """Runs a registered tool by name, wrapping the matching
     ``player_action.py`` function (``media.*``),
-    ``jairus.infrastructure.automation.apps`` function (``apps.*``), or
-    ``jairus.infrastructure.automation.browser`` function (``browser.*``).
+    ``jairus.infrastructure.automation.apps`` function (``apps.*``),
+    ``jairus.infrastructure.automation.browser`` function (``browser.*``),
+    or ``jairus.infrastructure.automation.windows_ui`` function (``windows.*``).
 
     ``tool_name`` is looked up in the Tool Registry first (``get_tool()``
     from Phase 5) — a name that isn't registered there returns a
@@ -152,8 +200,9 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     without attempting to run anything. Note this means the registry must
     already be populated (e.g. by calling
     ``jairus.tools.register_media_tools()``,
-    ``jairus.tools.register_app_tools()``, and/or
-    ``jairus.tools.register_browser_tools()``) before a call can succeed;
+    ``jairus.tools.register_app_tools()``,
+    ``jairus.tools.register_browser_tools()``, and/or
+    ``jairus.tools.register_windows_tools()``) before a call can succeed;
     nothing in this module registers tools itself.
 
     A tool call that raises is caught and reported as
