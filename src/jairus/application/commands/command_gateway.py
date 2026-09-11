@@ -1,12 +1,21 @@
 """Command Gateway — the controlled entry point for commands.
 
 JAIRUS_ARCHITECTURE.md Part 9 (Command Gateway) and Part 14.5 (migration
-Phase 3).
+Phase 3), extended in Phase 4 (Part 14.6) to also drive a linked Task via
+the Task Manager.
 
 Phase 3 scope, deliberately narrow: this wraps the EXISTING
 ``assistant_loop.handle_command()`` with a real command identity
 (``command_id``) and a lifecycle status (RECEIVED -> UNDERSTANDING ->
 COMPLETED / FAILED), using the ``Command`` domain model introduced in Phase 2.
+
+Phase 4 adds: right after the ``Command`` is created, a ``Task`` is created
+and linked to it by ``command_id`` (see ``task_manager.create_task``). The
+task moves to EXECUTING right before ``handle_command()`` is called, then to
+COMPLETED or FAILED mirroring the command's own final status. No
+PLANNING/OBSERVING transitions are driven here — there is no real planning or
+observation step until the Agent Core exists (a later phase), so those states
+are not faked.
 
 It does NOT change any decision logic. ``handle_command()`` still does all of
 the actual work (intent parsing, the if/elif action dispatch, the ``speak()``
@@ -21,7 +30,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from jairus.application.tasks import create_task, update_task_status
 from jairus.domain.commands import Command, CommandSource, CommandStatus
+from jairus.domain.tasks import TaskStatus
 
 
 def submit_command(
@@ -55,7 +66,8 @@ def submit_command(
         ``handle_command()`` returned normally, or ``FAILED`` if it raised.
         Exceptions are swallowed here on purpose: the voice loop must stay
         alive and keep listening after a failed command, exactly as it does
-        today.
+        today. A ``Task`` linked to this command (by ``command_id``) is
+        created and driven alongside it — see ``task_manager`` for its record.
     """
     command = Command(
         command_id=str(uuid.uuid4()),
@@ -67,6 +79,8 @@ def submit_command(
     )
     print(f"[gateway] command {command.command_id} received: '{text}'")
 
+    task = create_task(command.command_id)
+
     command.status = CommandStatus.UNDERSTANDING
     print(f"[gateway] command {command.command_id} -> understanding")
 
@@ -75,13 +89,17 @@ def submit_command(
     # assistant_loop imports this module at load time.
     from assistant_loop import handle_command
 
+    update_task_status(task.task_id, TaskStatus.EXECUTING)
+
     try:
         handle_command(text, context, state)
     except Exception as exc:  # keep the assistant alive, same resilience as today
         command.status = CommandStatus.FAILED
         print(f"[gateway] command {command.command_id} -> failed: {exc}")
+        update_task_status(task.task_id, TaskStatus.FAILED)
         return command
 
     command.status = CommandStatus.COMPLETED
     print(f"[gateway] command {command.command_id} -> completed")
+    update_task_status(task.task_id, TaskStatus.COMPLETED)
     return command
