@@ -9,3 +9,4 @@ pywin32
 pygame
 psutil
 pywinauto
+websockets
