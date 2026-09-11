@@ -116,3 +116,32 @@ run here because it needs a microphone, GPU, a running Ollama, and a
 debug-port Brave session; the code path from `submit_command` into the
 unchanged `handle_command` is a direct, unconditional call, so it is
 equivalent to today's behaviour plus the lifecycle bookkeeping.
+
+---
+
+## Post-Phase-4 fix: real success/failure, not just "no exception raised"
+
+**Found via live testing:** a command whose action actually failed (a player
+error) still showed the Command/Task as `COMPLETED` in the terminal output.
+
+**Cause:** `handle_command()` has its own internal `try/except` — it already
+catches player/action errors, logs them, and speaks "Something went wrong,"
+then falls through and returns `None` either way. Since no exception ever
+reached `submit_command()`, the "no exception raised → `COMPLETED`" logic
+described above couldn't tell a real success from a failure `handle_command()`
+had already silently handled.
+
+**Fix (minimal, additive — no decision logic or routing touched):**
+
+- `handle_command()`'s existing `try` block now ends with `return True`
+  (after `context.add_turn(...)`); its existing `except` block now ends with
+  `return False` (after the same `print`/`speak` calls it already had). That
+  is the only change to this function — two added `return` statements.
+- `submit_command()` now reads that return value: `succeeded = handle_command(...)`,
+  then `command.status = COMPLETED if succeeded else FAILED` (and the
+  linked Task is driven the same way). The `try/except` around the call is
+  kept as defense in depth, in case something outside `handle_command()`'s
+  own internal handling still raises.
+
+Behaviour for the user is unchanged (same speech, same fallback); only the
+`Command`/`Task` status now reflects what actually happened.

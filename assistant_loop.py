@@ -114,8 +114,10 @@ def handle_command(text: str, context: ConversationContext, state):
     except Exception as e:
         print(f"[player] something went wrong ({e})")
         speak("Something went wrong", state)
+        return False
 
     context.add_turn(text, intent)
+    return True
 
 
 def run_assistant(state):

@@ -63,11 +63,12 @@ def submit_command(
     -------
     Command
         The command record, with ``status`` set to ``COMPLETED`` if
-        ``handle_command()`` returned normally, or ``FAILED`` if it raised.
-        Exceptions are swallowed here on purpose: the voice loop must stay
-        alive and keep listening after a failed command, exactly as it does
-        today. A ``Task`` linked to this command (by ``command_id``) is
-        created and driven alongside it — see ``task_manager`` for its record.
+        ``handle_command()`` returned ``True``, or ``FAILED`` if it returned
+        ``False`` or raised. Exceptions are swallowed here on purpose: the
+        voice loop must stay alive and keep listening after a failed
+        command, exactly as it does today. A ``Task`` linked to this command
+        (by ``command_id``) is created and driven alongside it — see
+        ``task_manager`` for its record.
     """
     command = Command(
         command_id=str(uuid.uuid4()),
@@ -92,14 +93,19 @@ def submit_command(
     update_task_status(task.task_id, TaskStatus.EXECUTING)
 
     try:
-        handle_command(text, context, state)
-    except Exception as exc:  # keep the assistant alive, same resilience as today
+        succeeded = handle_command(text, context, state)
+    except Exception as exc:  # defense in depth: handle_command() has its own internal
+        # try/except already, but this still guards against anything outside it raising
         command.status = CommandStatus.FAILED
         print(f"[gateway] command {command.command_id} -> failed: {exc}")
         update_task_status(task.task_id, TaskStatus.FAILED)
         return command
 
-    command.status = CommandStatus.COMPLETED
-    print(f"[gateway] command {command.command_id} -> completed")
-    update_task_status(task.task_id, TaskStatus.COMPLETED)
+    # handle_command() catches its own player/action errors internally (logs + speaks
+    # them) and used to return normally either way, so "no exception raised" alone
+    # couldn't tell a real success from a silently-handled failure. It now reports
+    # which one happened via its return value; that's what actually drives status here.
+    command.status = CommandStatus.COMPLETED if succeeded else CommandStatus.FAILED
+    print(f"[gateway] command {command.command_id} -> {command.status.value}")
+    update_task_status(task.task_id, TaskStatus.COMPLETED if succeeded else TaskStatus.FAILED)
     return command
