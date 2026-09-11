@@ -51,6 +51,49 @@ if _SRC_DIR not in sys.path:
 from jairus.application.commands.command_gateway import submit_command
 from jairus.domain.commands import CommandSource
 
+# --- Jairus migration (Phase 11): shadow-mode Agent Core. Runs ALONGSIDE the
+# real path above, in dry-run mode only -- it observes and logs what the new
+# Agent Core would have done with the same transcribed text, but can never
+# execute anything or affect what the user hears/sees. See
+# AGENT_SHADOW_MODE.md. Registration is one-time setup (Phase 5's tools are
+# data until register_media_tools() populates the registry); the allow-list
+# here deliberately matches Aria's existing 9 voice actions exactly, nothing
+# more -- voice capabilities are not expanding in this phase. ---
+from jairus.application.agent import run_goal
+from jairus.tools import register_media_tools
+
+SHADOW_ALLOWED_TOOLS = [
+    "media.play",
+    "media.pause",
+    "media.resume",
+    "media.skip",
+    "media.correct",
+    "media.volume_up",
+    "media.volume_down",
+    "media.now_playing",
+    "media.queue",
+]
+
+
+def _shadow_evaluate(text: str) -> None:
+    """Runs the Agent Core against the same transcribed text, in dry-run
+    mode, purely to observe and log what it WOULD have done. Called AFTER
+    the real submit_command() above has already produced the real
+    response, specifically so shadow evaluation's own latency (an extra
+    Ollama round trip) can never delay what the user hears -- see
+    AGENT_SHADOW_MODE.md for why this ordering was chosen.
+
+    Deliberately swallows every exception: a shadow-evaluation failure
+    (Ollama down, a malformed response, anything at all) must never reach
+    the caller. The real assistant continues exactly as if shadow mode
+    didn't exist.
+    """
+    try:
+        run_goal(text, allowed_tools=SHADOW_ALLOWED_TOOLS, dry_run=True)
+    except Exception as e:
+        print(f"[shadow] evaluation failed: {e}")
+
+
 # ---- config ----
 # openWakeWord only ships a pretrained acoustic model for "hey jarvis" — there's no
 # pretrained "hey jairus" model, so this stays "hey_jarvis" even though the assistant
@@ -128,6 +171,10 @@ def run_assistant(state):
     context = ConversationContext()
     conversation_id = str(uuid.uuid4())  # one per program run; ConversationContext also resets per run
 
+    # Phase 11: one-time setup so the shadow Agent Core has tools to choose
+    # from (Phase 5's ToolDefinitions are inert data until registered).
+    register_media_tools()
+
     print(f"[ready] listening for wake word: '{wake_key.replace('_', ' ')}'")
     print("        say it, then say your command, e.g.:")
     print("        'hey jairus' ... 'play something chill'")
@@ -172,6 +219,7 @@ def run_assistant(state):
 
                 if text.strip():
                     submit_command(text, CommandSource.VOICE, context, state, conversation_id)
+                    _shadow_evaluate(text)  # Phase 11: dry-run only, observes/logs, never executes
                 else:
                     print("[skip] heard nothing usable, going back to sleep")
 

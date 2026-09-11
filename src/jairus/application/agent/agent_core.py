@@ -37,6 +37,23 @@ Registration is the caller's responsibility, same as every prior phase:
 ``run_goal()`` does not call ``register_media_tools()``/
 ``register_app_tools()`` itself — the registry must already be populated
 before a call here can succeed.
+
+**Phase 11 (Part 14.13) adds two parameters to ``run_goal()``, both
+opt-in, neither changing a single existing call's behavior:**
+
+- ``allowed_tools`` — overrides the module-level ``ALLOWED_TOOLS`` default
+  for that one call. Phase 11's shadow mode (`assistant_loop.py`) passes
+  its own, separate, media-only allow-list; every existing caller that
+  omits this argument keeps getting Phase 10's original 5-tool list,
+  unchanged.
+- ``dry_run`` — Phase 11's shadow mode: still makes a real LLM call and a
+  real policy evaluation, but STRUCTURALLY guarantees neither
+  ``request_confirmation()`` (which blocks on a terminal ``input()``) nor
+  ``execute_tool()`` is ever reached. A live, unattended voice session
+  must never freeze waiting for a keypress that will never come, and must
+  never have shadow evaluation actually affect what the user hears — see
+  the ``if dry_run:`` branch in ``run_goal()`` for where that guarantee
+  actually lives in the code, not merely in this comment.
 """
 
 from __future__ import annotations
@@ -86,12 +103,12 @@ Rules:
 """
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(allowed_tools: list[str]) -> str:
     """Pulls each allowed tool's description/input_schema straight from
     its actual registered ToolDefinition — no duplicated tool-description
     text lives in this prompt."""
     lines = []
-    for name in ALLOWED_TOOLS:
+    for name in allowed_tools:
         tool = get_tool(name)
         if tool is None:
             # Can happen if the caller hasn't registered every allow-listed
@@ -103,11 +120,11 @@ def _build_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(tool_descriptions="\n".join(lines))
 
 
-def _call_ollama(goal_text: str) -> dict[str, Any]:
+def _call_ollama(goal_text: str, allowed_tools: list[str]) -> dict[str, Any]:
     # Same HTTP pattern intent_parser.py already uses (requests.post to
     # localhost:11434/api/generate) — duplicated deliberately rather than
     # imported, to keep this module decoupled from intent_parser.py.
-    full_prompt = f'{_build_system_prompt()}\n\nGoal: "{goal_text}"\nJSON:'
+    full_prompt = f'{_build_system_prompt(allowed_tools)}\n\nGoal: "{goal_text}"\nJSON:'
     response = requests.post(
         OLLAMA_URL,
         json={
@@ -125,23 +142,32 @@ def _call_ollama(goal_text: str) -> dict[str, Any]:
     return json.loads(raw_output)
 
 
-def run_goal(goal_text: str) -> ToolResult:
-    """Asks the LLM to pick one tool (from ``ALLOWED_TOOLS`` only) for
-    ``goal_text``, validates that choice, gates it through the Policy
-    Engine, and — if allowed or approved — runs it through the EXISTING
-    Tool Executor (Phase 6, unmodified). Returns the resulting
-    ``ToolResult``; a "no suitable tool" outcome or a declined
-    confirmation are both normal, reportable results here, not raised
-    exceptions.
+def run_goal(goal_text: str, allowed_tools: list[str] | None = None, dry_run: bool = False) -> ToolResult:
+    """Asks the LLM to pick one tool (from ``allowed_tools``, defaulting to
+    Phase 10's ``ALLOWED_TOOLS`` if omitted) for ``goal_text``, validates
+    that choice, gates it through the Policy Engine, and — if allowed or
+    approved — runs it through the EXISTING Tool Executor (Phase 6,
+    unmodified). Returns the resulting ``ToolResult``; a "no suitable
+    tool" outcome or a declined confirmation are both normal, reportable
+    results here, not raised exceptions.
 
     Follows Part 68's validation pipeline: parse -> schema check -> tool
     exists (in the allow-list AND the registry) -> policy check ->
     confirmation if required -> execute.
+
+    ``dry_run=True`` (Phase 11's shadow mode) still performs the real LLM
+    call and the real policy check, but stops there: neither
+    ``request_confirmation()`` nor ``execute_tool()`` is ever called. See
+    the module docstring for why that guarantee has to be structural, not
+    incidental.
     """
-    print(f"[agent] goal: '{goal_text}'")
+    if allowed_tools is None:
+        allowed_tools = ALLOWED_TOOLS
+
+    print(f"[agent] goal: '{goal_text}'" + (" [dry run]" if dry_run else ""))
 
     try:
-        decision = _call_ollama(goal_text)
+        decision = _call_ollama(goal_text, allowed_tools)
     except (requests.RequestException, ValueError) as exc:
         # ValueError covers json.loads failing on a malformed LLM response —
         # Part 68: invalid output is rejected, not guessed at.
@@ -171,15 +197,15 @@ def run_goal(goal_text: str) -> ToolResult:
         return ToolResult(success=False, error=message, failure_category=FailureCategory.NOT_FOUND)
 
     # Part 16: "the registry says Tool not found -> REJECT, never guess or
-    # substitute." Checked against BOTH the hardcoded allow-list and the
-    # actual registry — the LLM cannot reach a tool by picking a name
-    # outside this phase's allow-list even if it's registered elsewhere,
-    # and it cannot reach a hallucinated name that isn't registered at all.
-    if tool_name not in ALLOWED_TOOLS:
-        print(f"[agent] rejected: '{tool_name}' is not in this phase's allow-list")
+    # substitute." Checked against BOTH the given allow-list and the actual
+    # registry — the LLM cannot reach a tool by picking a name outside this
+    # call's allow-list even if it's registered elsewhere, and it cannot
+    # reach a hallucinated name that isn't registered at all.
+    if tool_name not in allowed_tools:
+        print(f"[agent] rejected: '{tool_name}' is not in the allowed tool list for this call")
         return ToolResult(
             success=False,
-            error=f"'{tool_name}' is outside the allowed tool list for this phase",
+            error=f"'{tool_name}' is outside the allowed tool list",
             failure_category=FailureCategory.NOT_FOUND,
         )
 
@@ -193,6 +219,28 @@ def run_goal(goal_text: str) -> ToolResult:
         )
 
     policy_decision = evaluate(tool_definition)
+
+    if dry_run:
+        # STRUCTURAL guarantee, not a happy coincidence: request_confirmation()
+        # (which blocks on a terminal input()) and execute_tool() are simply
+        # unreachable code from this branch — there is no path from here to
+        # either call, regardless of what policy_decision says. A shadow
+        # evaluation can never freeze a live voice session waiting for a
+        # keypress, and can never affect what the user hears/sees.
+        print(
+            f"[shadow] would call: {tool_name} args={arguments} "
+            f"(policy={policy_decision}, dry run, not executed)"
+        )
+        return ToolResult(
+            success=True,
+            data={
+                "would_call": tool_name,
+                "arguments": arguments,
+                "policy_decision": policy_decision,
+                "dry_run": True,
+            },
+        )
+
     if policy_decision == "confirm":
         approved = request_confirmation(tool_definition, arguments)
         if not approved:
