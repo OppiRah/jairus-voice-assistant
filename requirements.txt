@@ -7,3 +7,4 @@ playwright
 pyttsx3
 pywin32
 pygame
+psutil
