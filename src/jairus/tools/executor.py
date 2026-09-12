@@ -35,13 +35,19 @@ friendly game name through the Game Registry and delegates straight to
 Phase 7's existing ``apps.py`` functions, duplicating none of that
 automation logic. Same try/except/``ToolResult`` shape once again.
 
+Phase 16 (Part 14.18) adds the four ``filesystem.*`` tools, mapped to
+``jairus.infrastructure.filesystem.fs_tools`` (new this phase, read-only:
+search/list/read/exists — no write/delete/move capability exists anywhere
+in that module). Same try/except/``ToolResult`` shape once again.
+
 Per the architecture's own sequencing — "Introduce the Real Agent Loop" is
 Part 14.12 and "Remove legacy intent routing" is Part 14.13, both AFTER
 Phase 9 — there is no Agent Core wired into live voice dispatch to decide
 which tool to call, and nothing here wires ``execute_tool()`` into
 ``handle_command()``'s legacy dispatch. It is complete and tested
 standalone but unreachable from voice; see TOOL_EXECUTOR.md, APPS_TOOLS.md,
-BROWSER_TOOLS.md, WINDOWS_UI_TOOLS.md, and GAME_TOOLS.md.
+BROWSER_TOOLS.md, WINDOWS_UI_TOOLS.md, GAME_TOOLS.md, and
+FILESYSTEM_TOOLS.md.
 """
 
 from __future__ import annotations
@@ -63,6 +69,7 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     from jairus.infrastructure.automation import browser as browser_automation
     from jairus.infrastructure.automation import games
     from jairus.infrastructure.automation import windows_ui
+    from jairus.infrastructure.filesystem import fs_tools
 
     def run_play(arguments: dict[str, Any]) -> None:
         # play_song() expects an intent-shaped dict with "title"/"artist",
@@ -130,6 +137,23 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
 
     def run_game_list_running(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"games": games.list_running_games()}
+
+    def run_filesystem_search(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "matches": fs_tools.search_files(
+                arguments.get("directory", ""), arguments.get("pattern", "")
+            )
+        }
+
+    def run_filesystem_list(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"entries": fs_tools.list_directory(arguments.get("path", ""))}
+
+    def run_filesystem_read(arguments: dict[str, Any]) -> dict[str, Any]:
+        max_bytes = arguments.get("max_bytes", 100_000)
+        return {"content": fs_tools.read_file(arguments.get("path", ""), max_bytes)}
+
+    def run_filesystem_exists(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"exists": fs_tools.path_exists(arguments.get("path", ""))}
 
     def run_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         return browser_automation.navigate(arguments.get("url", ""))
@@ -200,6 +224,10 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
         "game.focus": run_game_focus,
         "game.close": run_game_close,
         "game.list_running": run_game_list_running,
+        "filesystem.search": run_filesystem_search,
+        "filesystem.list": run_filesystem_list,
+        "filesystem.read": run_filesystem_read,
+        "filesystem.exists": run_filesystem_exists,
         "browser.navigate": run_browser_navigate,
         "browser.search": run_browser_search,
         "browser.get_current_page": run_browser_get_current_page,
@@ -220,7 +248,9 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     ``jairus.infrastructure.automation.apps`` function (``apps.*``),
     ``jairus.infrastructure.automation.browser`` function (``browser.*``),
     ``jairus.infrastructure.automation.windows_ui`` function (``windows.*``),
-    or ``jairus.infrastructure.automation.games`` function (``game.*``).
+    ``jairus.infrastructure.automation.games`` function (``game.*``), or
+    ``jairus.infrastructure.filesystem.fs_tools`` function
+    (``filesystem.*``).
 
     ``tool_name`` is looked up in the Tool Registry first (``get_tool()``
     from Phase 5) — a name that isn't registered there returns a
@@ -230,9 +260,10 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     ``jairus.tools.register_media_tools()``,
     ``jairus.tools.register_app_tools()``,
     ``jairus.tools.register_browser_tools()``,
-    ``jairus.tools.register_windows_tools()``, and/or
-    ``jairus.tools.register_game_tools()``) before a call can succeed;
-    nothing in this module registers tools itself.
+    ``jairus.tools.register_windows_tools()``,
+    ``jairus.tools.register_game_tools()``, and/or
+    ``jairus.tools.register_filesystem_tools()``) before a call can
+    succeed; nothing in this module registers tools itself.
 
     A tool call that raises is caught and reported as
     ``failure_category=EXECUTION_ERROR`` rather than propagating, so a
