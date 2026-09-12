@@ -29,13 +29,19 @@ Phase 9 (Part 14.11) adds the six ``windows.*`` tools, mapped to
 Windows UI Automation via pywinauto, no coordinate clicking). Same
 try/except/``ToolResult`` shape once again.
 
+Phase 15 (Part 14.17) adds the five ``game.*`` tools, mapped to
+``jairus.infrastructure.automation.games`` — which itself resolves a
+friendly game name through the Game Registry and delegates straight to
+Phase 7's existing ``apps.py`` functions, duplicating none of that
+automation logic. Same try/except/``ToolResult`` shape once again.
+
 Per the architecture's own sequencing — "Introduce the Real Agent Loop" is
 Part 14.12 and "Remove legacy intent routing" is Part 14.13, both AFTER
-this phase — there is no Agent Core yet to decide which tool to call, and
-nothing here wires ``execute_tool()`` into ``handle_command()``'s live
-dispatch. It is complete and tested standalone but uncalled by the running
-assistant; see TOOL_EXECUTOR.md, APPS_TOOLS.md, BROWSER_TOOLS.md, and
-WINDOWS_UI_TOOLS.md.
+Phase 9 — there is no Agent Core wired into live voice dispatch to decide
+which tool to call, and nothing here wires ``execute_tool()`` into
+``handle_command()``'s legacy dispatch. It is complete and tested
+standalone but unreachable from voice; see TOOL_EXECUTOR.md, APPS_TOOLS.md,
+BROWSER_TOOLS.md, WINDOWS_UI_TOOLS.md, and GAME_TOOLS.md.
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     import player_action
     from jairus.infrastructure.automation import apps
     from jairus.infrastructure.automation import browser as browser_automation
+    from jairus.infrastructure.automation import games
     from jairus.infrastructure.automation import windows_ui
 
     def run_play(arguments: dict[str, Any]) -> None:
@@ -108,6 +115,21 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
 
     def run_apps_list_running(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"apps": apps.list_running_apps()}
+
+    def run_game_launch(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"launched": games.launch_game(arguments.get("name", ""))}
+
+    def run_game_detect(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"running": games.detect_game(arguments.get("name", ""))}
+
+    def run_game_focus(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"focused": games.focus_game(arguments.get("name", ""))}
+
+    def run_game_close(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"closed": games.close_game(arguments.get("name", ""))}
+
+    def run_game_list_running(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"games": games.list_running_games()}
 
     def run_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         return browser_automation.navigate(arguments.get("url", ""))
@@ -173,6 +195,11 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
         "apps.focus": run_apps_focus,
         "apps.detect": run_apps_detect,
         "apps.list_running": run_apps_list_running,
+        "game.launch": run_game_launch,
+        "game.detect": run_game_detect,
+        "game.focus": run_game_focus,
+        "game.close": run_game_close,
+        "game.list_running": run_game_list_running,
         "browser.navigate": run_browser_navigate,
         "browser.search": run_browser_search,
         "browser.get_current_page": run_browser_get_current_page,
@@ -192,7 +219,8 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     ``player_action.py`` function (``media.*``),
     ``jairus.infrastructure.automation.apps`` function (``apps.*``),
     ``jairus.infrastructure.automation.browser`` function (``browser.*``),
-    or ``jairus.infrastructure.automation.windows_ui`` function (``windows.*``).
+    ``jairus.infrastructure.automation.windows_ui`` function (``windows.*``),
+    or ``jairus.infrastructure.automation.games`` function (``game.*``).
 
     ``tool_name`` is looked up in the Tool Registry first (``get_tool()``
     from Phase 5) — a name that isn't registered there returns a
@@ -201,8 +229,9 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     already be populated (e.g. by calling
     ``jairus.tools.register_media_tools()``,
     ``jairus.tools.register_app_tools()``,
-    ``jairus.tools.register_browser_tools()``, and/or
-    ``jairus.tools.register_windows_tools()``) before a call can succeed;
+    ``jairus.tools.register_browser_tools()``,
+    ``jairus.tools.register_windows_tools()``, and/or
+    ``jairus.tools.register_game_tools()``) before a call can succeed;
     nothing in this module registers tools itself.
 
     A tool call that raises is caught and reported as
