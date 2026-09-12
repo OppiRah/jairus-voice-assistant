@@ -3,6 +3,7 @@ executor that can run them."""
 
 from .app_tools import APP_TOOLS, register_app_tools
 from .browser_tools import BROWSER_TOOLS, register_browser_tools
+from .developer_tools import DEVELOPER_TOOLS, register_developer_tools
 from .executor import execute_tool
 from .filesystem_tools import FILESYSTEM_TOOLS, register_filesystem_tools
 from .game_tools import GAME_TOOLS, register_game_tools
@@ -26,5 +27,7 @@ __all__ = [
     "register_game_tools",
     "FILESYSTEM_TOOLS",
     "register_filesystem_tools",
+    "DEVELOPER_TOOLS",
+    "register_developer_tools",
     "execute_tool",
 ]

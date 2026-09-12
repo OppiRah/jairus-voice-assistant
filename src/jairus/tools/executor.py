@@ -40,14 +40,21 @@ Phase 16 (Part 14.18) adds the four ``filesystem.*`` tools, mapped to
 search/list/read/exists — no write/delete/move capability exists anywhere
 in that module). Same try/except/``ToolResult`` shape once again.
 
+Phase 17 (Part 14.19) adds the five ``developer.*`` tools, mapped to
+``jairus.infrastructure.developer.dev_tools`` (new this phase — bounded
+git status/diff, running ``pytest`` with a fixed argument set, an in-Python
+code search, and opening VS Code; deliberately never a general shell, per
+Part 91's explicit exclusion of "unrestricted shell"/"unrestricted
+PowerShell"). Same try/except/``ToolResult`` shape once again.
+
 Per the architecture's own sequencing — "Introduce the Real Agent Loop" is
 Part 14.12 and "Remove legacy intent routing" is Part 14.13, both AFTER
 Phase 9 — there is no Agent Core wired into live voice dispatch to decide
 which tool to call, and nothing here wires ``execute_tool()`` into
 ``handle_command()``'s legacy dispatch. It is complete and tested
 standalone but unreachable from voice; see TOOL_EXECUTOR.md, APPS_TOOLS.md,
-BROWSER_TOOLS.md, WINDOWS_UI_TOOLS.md, GAME_TOOLS.md, and
-FILESYSTEM_TOOLS.md.
+BROWSER_TOOLS.md, WINDOWS_UI_TOOLS.md, GAME_TOOLS.md, FILESYSTEM_TOOLS.md,
+and DEVELOPER_TOOLS.md.
 """
 
 from __future__ import annotations
@@ -69,6 +76,7 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     from jairus.infrastructure.automation import browser as browser_automation
     from jairus.infrastructure.automation import games
     from jairus.infrastructure.automation import windows_ui
+    from jairus.infrastructure.developer import dev_tools
     from jairus.infrastructure.filesystem import fs_tools
 
     def run_play(arguments: dict[str, Any]) -> None:
@@ -155,6 +163,29 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
     def run_filesystem_exists(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"exists": fs_tools.path_exists(arguments.get("path", ""))}
 
+    def run_developer_git_status(arguments: dict[str, Any]) -> dict[str, Any]:
+        return dev_tools.git_status(arguments.get("repo_path", ""))
+
+    def run_developer_git_diff(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "diff": dev_tools.git_diff(arguments.get("repo_path", ""), arguments.get("file_path"))
+        }
+
+    def run_developer_run_tests(arguments: dict[str, Any]) -> dict[str, Any]:
+        return dev_tools.run_tests(arguments.get("repo_path", ""))
+
+    def run_developer_search_code(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "matches": dev_tools.search_code(
+                arguments.get("repo_path", ""),
+                arguments.get("query", ""),
+                arguments.get("file_pattern", "*.py"),
+            )
+        }
+
+    def run_developer_open_project(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"opened": dev_tools.open_project(arguments.get("path", ""))}
+
     def run_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         return browser_automation.navigate(arguments.get("url", ""))
 
@@ -228,6 +259,11 @@ def _handlers() -> dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]]:
         "filesystem.list": run_filesystem_list,
         "filesystem.read": run_filesystem_read,
         "filesystem.exists": run_filesystem_exists,
+        "developer.git_status": run_developer_git_status,
+        "developer.git_diff": run_developer_git_diff,
+        "developer.run_tests": run_developer_run_tests,
+        "developer.search_code": run_developer_search_code,
+        "developer.open_project": run_developer_open_project,
         "browser.navigate": run_browser_navigate,
         "browser.search": run_browser_search,
         "browser.get_current_page": run_browser_get_current_page,
@@ -248,9 +284,10 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     ``jairus.infrastructure.automation.apps`` function (``apps.*``),
     ``jairus.infrastructure.automation.browser`` function (``browser.*``),
     ``jairus.infrastructure.automation.windows_ui`` function (``windows.*``),
-    ``jairus.infrastructure.automation.games`` function (``game.*``), or
+    ``jairus.infrastructure.automation.games`` function (``game.*``),
     ``jairus.infrastructure.filesystem.fs_tools`` function
-    (``filesystem.*``).
+    (``filesystem.*``), or ``jairus.infrastructure.developer.dev_tools``
+    function (``developer.*``).
 
     ``tool_name`` is looked up in the Tool Registry first (``get_tool()``
     from Phase 5) — a name that isn't registered there returns a
@@ -261,8 +298,9 @@ def execute_tool(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
     ``jairus.tools.register_app_tools()``,
     ``jairus.tools.register_browser_tools()``,
     ``jairus.tools.register_windows_tools()``,
-    ``jairus.tools.register_game_tools()``, and/or
-    ``jairus.tools.register_filesystem_tools()``) before a call can
+    ``jairus.tools.register_game_tools()``,
+    ``jairus.tools.register_filesystem_tools()``, and/or
+    ``jairus.tools.register_developer_tools()``) before a call can
     succeed; nothing in this module registers tools itself.
 
     A tool call that raises is caught and reported as
