@@ -1,0 +1,80 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://glass_poc_test.gd" id="1_script"]
+[ext_resource type="Shader" path="res://glass_poc_fresnel.gdshader" id="2_fresnel_shader"]
+[ext_resource type="Shader" path="res://glass_poc_refraction.gdshader" id="3_refraction_shader"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_marker"]
+radius = 0.55
+height = 1.1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_marker"]
+shading_mode = 0
+albedo_color = Color(1, 0.1, 0.85, 1)
+emission_enabled = true
+emission = Color(1, 0.1, 0.85, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_shell"]
+radius = 0.8
+height = 1.6
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_fresnel"]
+shader = ExtResource("2_fresnel_shader")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_refraction"]
+shader = ExtResource("3_refraction_shader")
+
+[node name="GlassPocTest" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6)
+current = true
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 1.5, 2)
+light_energy = 0.6
+omni_range = 8.0
+
+[node name="BackgroundMarker" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 0, -1.5)
+mesh = SubResource("SphereMesh_marker")
+surface_material_override/0 = SubResource("StandardMaterial3D_marker")
+
+[node name="FresnelShell" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.6, 0, 0)
+mesh = SubResource("SphereMesh_shell")
+surface_material_override/0 = SubResource("ShaderMaterial_fresnel")
+
+[node name="RefractionShell" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 0, 0)
+mesh = SubResource("SphereMesh_shell")
+surface_material_override/0 = SubResource("ShaderMaterial_refraction")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="FresnelLabel" type="Label" parent="UI"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 300.0
+offset_bottom = 60.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 16
+text = "LEFT: Fresnel rim-lighting (recommended)"
+
+[node name="RefractionLabel" type="Label" parent="UI"]
+offset_left = 20.0
+offset_top = 50.0
+offset_right = 620.0
+offset_bottom = 90.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 16
+text = "RIGHT: SCREEN_TEXTURE refraction -- should show the MAGENTA marker (Godot's own scene), not real desktop"
+autowrap_mode = 3
