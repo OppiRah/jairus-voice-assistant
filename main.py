@@ -7,16 +7,13 @@ Stop: close the orb window (or Ctrl+C in the terminal)
 """
 
 import threading
-import pygame
 
 from assistant_state import AssistantState
 from assistant_loop import run_assistant
-from orb_ui import run_orb
+from orb_widget import run_orb
 
 
 def main():
-    pygame.init()  # initialize once, on the main thread, before the assistant thread starts
-
     state = AssistantState()
 
     assistant_thread = threading.Thread(target=run_assistant, args=(state,), daemon=True)
