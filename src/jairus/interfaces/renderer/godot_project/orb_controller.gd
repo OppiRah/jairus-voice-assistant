@@ -93,6 +93,81 @@ const ARC_EMISSION_ENERGY := 4.0  # baseline HDR multiplier for arc material, in
 const ACTIVITY_TEXT_BRIGHTEN := 0.45  # lerp weight toward Color.WHITE
 const ACTIVITY_FADE_SECONDS := 0.25   # each half of the fade-out/swap/fade-in transition
 
+const GLASS_SHELL_SHADER := preload("res://orb_glass_shell.gdshader")
+
+# Full Fresnel glass + layered depth pass: 4 concentric, non-uniformly-
+# scaled (ellipsoid, not perfect-sphere -- a plain sphere looks identical
+# under any rotation, so an ellipsoid is what actually makes "varying
+# rotations/tilts" visible) glass shells around the core, reusing the
+# Fresnel rim-lighting technique validated in glass_poc_fresnel.gdshader
+# (ORB_RENDERER_INVESTIGATION.md section 9). power_offset/rim_offset/tint
+# are per-shell STRUCTURAL differences (so the 4 shells read as distinct
+# layers even in the same state); STATE_PROFILES' glass_rim_intensity/
+# glass_lens_strength below are the per-STATE behavior layered on top of
+# these, same "structural constant + state-driven multiplier" split
+# already used for rings (RING_TILT_DEG is structural; ring_speed/
+# ring_opacity are per-state). power_offset increases outward (innermost
+# shell has the broadest/softest rim, outermost the sharpest/brightest) so
+# the 4 layers read as "energy building outward," echoing the concept
+# image's layered-depth feel.
+const GLASS_BASE_FRESNEL_POWER := 3.0
+const GLASS_BASE_RIM_ALPHA := 0.65
+const GLASS_CORE_ALPHA := 0.06  # near-invisible body so the core/rings stay the visual focus, not the glass itself
+const GLASS_LENS_DISTORTION_BASE := 0.05  # deliberately subtle -- see orb_glass_shell.gdshader's own comment on what this can and can't show
+
+# Sizing/visibility note (revised after two real screenshots): attempt 1
+# spread the 4 shells from radius 0.85 to 1.85, directly overlapping
+# RingA/RingB's own 1.3-1.7 band -- read as a muddy stack of extra "rings"
+# competing with the actual rings. Attempt 2 clustered them at 0.8-1.2
+# (safely under RingA's 1.3 inner radius), which fixed that, but a
+# Fresnel-lit sphere always brightens its own silhouette edge -- 4 equally
+# bright concentric shells inherently read as 4 equally-visible nested
+# rings, not "glass depth" (an intrinsic property of the technique on a
+# static front view, not a tunable bug). This third pass keeps the same
+# sizing but makes the inner two shells deliberately much dimmer (soft
+# ambient haze around the core, barely visible on their own) so only the
+# outer two read as distinct glass edges -- fewer equally-weighted rings,
+# more "soft glow building outward to a visible edge."
+const GLASS_SHELL_CONFIGS := [
+	{
+		"scale": Vector3(0.8, 0.77, 0.8), "tilt_x_deg": 10.0, "tilt_z_deg": 0.0,
+		"power_offset": -1.0, "rim_offset": -0.42, "tint": Color(0.02, 0.0, -0.02),
+		"render_priority": -5,
+	},
+	{
+		"scale": Vector3(0.93, 0.89, 0.91), "tilt_x_deg": 25.0, "tilt_z_deg": 40.0,
+		"power_offset": -0.4, "rim_offset": -0.30, "tint": Color(0.0, 0.02, 0.02),
+		"render_priority": -4,
+	},
+	{
+		"scale": Vector3(1.07, 1.02, 1.05), "tilt_x_deg": 40.0, "tilt_z_deg": 90.0,
+		"power_offset": 0.3, "rim_offset": -0.02, "tint": Color(-0.02, 0.0, 0.03),
+		"render_priority": -3,
+	},
+	{
+		"scale": Vector3(1.2, 1.13, 1.17), "tilt_x_deg": 55.0, "tilt_z_deg": 140.0,
+		"power_offset": 0.9, "rim_offset": 0.05, "tint": Color(0.03, -0.01, 0.02),
+		"render_priority": -1,
+	},
+]
+
+# render_priority for every OTHER layered-transparent element, chosen to
+# match their real radial position relative to the 4 glass shells above
+# (arcs at radius 0.75, particles scattered around ~1.1 on average --
+# approximate, since particles actually move outward over their lifetime,
+# so a single static priority can only ever be a reasonable estimate --
+# RingA at inner/outer 1.3/1.45, RingB at 1.55/1.7) so the combined draw
+# order is consistently "innermost first, outermost last" across every
+# transparent object in the scene, not just within the glass shells
+# themselves. This is the investigation's named mitigation for AABB-based
+# sorting being unreliable when multiple transparent objects share (near
+# enough) the same center -- exactly this scene's shape now that there are
+# 4 more concentric objects than before.
+const RENDER_PRIORITY_ARCS := -6
+const RENDER_PRIORITY_PARTICLES := -2
+const RENDER_PRIORITY_RING_A := 0
+const RENDER_PRIORITY_RING_B := 1
+
 # One row per real AssistantStatus value -- every value that makes a
 # state FEEL different, not just a different color, lives here as a
 # single named table rather than scattered through _process()'s logic,
@@ -105,7 +180,12 @@ const ACTIVITY_FADE_SECONDS := 0.25   # each half of the fade-out/swap/fade-in t
 # coincidence. ring_speed/ring_opacity/arc_intensity/arc_frequency are
 # new this pass; full per-state reasoning (why ERROR's rings are fast and
 # chaotic, why OFFLINE's are nearly still, etc.) is in this pass's
-# integration report. Colors for executing/completed/error/offline
+# integration report. glass_rim_intensity/glass_lens_strength (full
+# Fresnel glass pass) multiply the 4 glass shells' structural per-shell
+# baselines (GLASS_SHELL_CONFIGS) -- e.g. ERROR's shells run brighter/more
+# distorted, OFFLINE's are barely visible, matching each state's existing
+# ring/arc/particle behavior rather than introducing a new, separate mood.
+# Colors for executing/completed/error/offline
 # deliberately reuse the exact RGB values theme.py's ORB_COLORS already
 # picked for the Qt orb (Phase 9) -- one project, one meaning per state,
 # even across two independent rendering surfaces. waiting_confirmation
@@ -119,6 +199,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.2, "glow_strength": 1.3,
 		"ring_speed": 0.15, "ring_opacity": 0.35,
 		"arc_intensity": 1.0, "arc_frequency": 0.15,
+		"glass_rim_intensity": 1.0, "glass_lens_strength": 1.0,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -127,6 +208,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.3, "glow_strength": 1.4,
 		"ring_speed": 0.25, "ring_opacity": 0.45,
 		"arc_intensity": 1.2, "arc_frequency": 0.3,
+		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.1,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -135,6 +217,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.3, "glow_strength": 1.3,
 		"ring_speed": 0.6, "ring_opacity": 0.5,
 		"arc_intensity": 1.4, "arc_frequency": 0.8,
+		"glass_rim_intensity": 1.3, "glass_lens_strength": 1.6,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -143,6 +226,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.3, "glow_strength": 1.4,
 		"ring_speed": 0.2, "ring_opacity": 0.4,
 		"arc_intensity": 1.3, "arc_frequency": 0.4,
+		"glass_rim_intensity": 1.15, "glass_lens_strength": 1.1,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -151,6 +235,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.4, "glow_strength": 1.5,
 		"ring_speed": 0.7, "ring_opacity": 0.55,
 		"arc_intensity": 1.5, "arc_frequency": 0.5,
+		"glass_rim_intensity": 1.4, "glass_lens_strength": 1.3,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -159,6 +244,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.2, "glow_strength": 1.3,
 		"ring_speed": 0.3, "ring_opacity": 0.5,
 		"arc_intensity": 1.6, "arc_frequency": 0.2,
+		"glass_rim_intensity": 1.2, "glass_lens_strength": 0.8,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -167,6 +253,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.5, "glow_strength": 1.6,
 		"ring_speed": 1.4, "ring_opacity": 0.6,
 		"arc_intensity": 1.8, "arc_frequency": 1.5,
+		"glass_rim_intensity": 1.6, "glass_lens_strength": 2.0,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -175,6 +262,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 0.3, "glow_strength": 0.4,
 		"ring_speed": 0.02, "ring_opacity": 0.1,
 		"arc_intensity": 0.3, "arc_frequency": 0.0,
+		"glass_rim_intensity": 0.15, "glass_lens_strength": 0.1,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -183,6 +271,7 @@ const STATE_PROFILES := {
 		"glow_intensity": 1.3, "glow_strength": 1.4,
 		"ring_speed": 0.2, "ring_opacity": 0.4,
 		"arc_intensity": 1.1, "arc_frequency": 0.25,
+		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.0,
 	},
 }
 
@@ -194,6 +283,7 @@ const STATE_PROFILES := {
 @onready var arc_a: MeshInstance3D = $ArcA
 @onready var arc_b: MeshInstance3D = $ArcB
 @onready var activity_label: Label = $UI/ActivityLabel
+@onready var glass_shells: Array[MeshInstance3D] = [$GlassShell1, $GlassShell2, $GlassShell3, $GlassShell4]
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -212,6 +302,7 @@ var _arc_material_b: StandardMaterial3D
 var _particle_material: StandardMaterial3D
 var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
 var _activity_tween: Tween
+var _glass_materials: Array[ShaderMaterial] = []
 
 
 func _ready() -> void:
@@ -230,28 +321,46 @@ func _ready() -> void:
 	# particle instance with the same emissive/unshaded material family as
 	# the core/rings/arcs, tinted from _current_color each frame in _process().
 	_particle_material = _make_translucent_material()
+	_particle_material.render_priority = RENDER_PRIORITY_PARTICLES
 	particles.material_override = _particle_material
 
 	_ring_material_a = _make_translucent_material()
+	_ring_material_a.render_priority = RENDER_PRIORITY_RING_A
 	ring_a.set_surface_override_material(0, _ring_material_a)
 	ring_a.rotate_x(deg_to_rad(RING_TILT_DEG))
 
 	_ring_material_b = _make_translucent_material()
+	_ring_material_b.render_priority = RENDER_PRIORITY_RING_B
 	ring_b.set_surface_override_material(0, _ring_material_b)
 	ring_b.rotate_x(deg_to_rad(RING_TILT_DEG))
 	ring_b.rotate_z(deg_to_rad(RING_B_ROLL_DEG))
 
 	_arc_material_a = _make_translucent_material()
+	_arc_material_a.render_priority = RENDER_PRIORITY_ARCS
 	arc_a.mesh = _build_arc_mesh(0.0)
 	arc_a.set_surface_override_material(0, _arc_material_a)
 
 	_arc_material_b = _make_translucent_material()
+	_arc_material_b.render_priority = RENDER_PRIORITY_ARCS
 	arc_b.mesh = _build_arc_mesh(3.3)  # different seed_offset -> a differently-jagged path than ArcA
 	arc_b.set_surface_override_material(0, _arc_material_b)
 	arc_b.rotate_y(deg_to_rad(120.0))  # offset so the two arcs don't start overlapping
 
-	print("[orb_controller] geometry ready: RingA/RingB (TorusMesh), ArcA vertices=%d, ArcB vertices=%d" % [
-		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0),
+	for i in range(glass_shells.size()):
+		var shell := glass_shells[i]
+		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
+		shell.scale = config["scale"]
+		shell.rotate_x(deg_to_rad(config["tilt_x_deg"]))
+		shell.rotate_z(deg_to_rad(config["tilt_z_deg"]))
+
+		var mat := ShaderMaterial.new()
+		mat.shader = GLASS_SHELL_SHADER
+		mat.render_priority = config["render_priority"]
+		shell.set_surface_override_material(0, mat)
+		_glass_materials.append(mat)
+
+	print("[orb_controller] geometry ready: RingA/RingB (TorusMesh), ArcA vertices=%d, ArcB vertices=%d, glass shells=%d" % [
+		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
 	])
 
 	var err := _socket.connect_to_url(WS_URL)
@@ -365,6 +474,7 @@ func _process(delta: float) -> void:
 
 	_update_rings(delta, profile)
 	_update_arcs(delta, profile)
+	_update_glass_shells(profile)
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -411,6 +521,26 @@ func _update_arcs(delta: float, profile: Dictionary) -> void:
 		_arc_material_b.albedo_color = _current_color
 		_arc_material_b.emission = _current_color
 		_arc_material_b.emission_energy_multiplier = ARC_EMISSION_ENERGY * intensity
+
+
+## STAGE 2 of the full Fresnel glass pass: same-scene lensing now enabled
+## (lens_distortion driven from STATE_PROFILES' glass_lens_strength),
+## on top of the Fresnel rim layering verified alone in stage 1's real
+## screenshots. See orb_glass_shell.gdshader's own comment for exactly
+## what this can and can't warp (the core and empty/desktop background --
+## never the rings/particles/other shells, which are transparent and not
+## yet drawn when the single per-frame screen copy is taken).
+func _update_glass_shells(profile: Dictionary) -> void:
+	var rim_intensity: float = profile["glass_rim_intensity"]
+	var lens_strength: float = profile["glass_lens_strength"]
+	for i in range(_glass_materials.size()):
+		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
+		var mat := _glass_materials[i]
+		mat.set_shader_parameter("base_color", (_current_color + config["tint"]).clamp())
+		mat.set_shader_parameter("fresnel_power", GLASS_BASE_FRESNEL_POWER + config["power_offset"])
+		mat.set_shader_parameter("rim_alpha", clamp(GLASS_BASE_RIM_ALPHA + config["rim_offset"], 0.0, 1.0) * rim_intensity)
+		mat.set_shader_parameter("core_alpha", GLASS_CORE_ALPHA)
+		mat.set_shader_parameter("lens_distortion", GLASS_LENS_DISTORTION_BASE * lens_strength)
 
 
 func _compute_breathe(pulse_speed: float, irregular: bool) -> float:
