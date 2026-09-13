@@ -32,9 +32,29 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+)
+
+# --- Jairus migration: make src/ importable, same pattern assistant_loop.py
+# already uses, so ToolsPage can read the Tool Registry Phases 5/7/8/9/15/16/17
+# populate. This is a read-only display concern, not a dispatch/execution one. ---
+_SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from jairus.domain.permissions.permission_level import PermissionLevel
+from jairus.tools import (
+    list_tools,
+    register_app_tools,
+    register_browser_tools,
+    register_developer_tools,
+    register_filesystem_tools,
+    register_game_tools,
+    register_media_tools,
+    register_windows_tools,
 )
 
 SIDEBAR_WIDTH = 150
@@ -235,11 +255,153 @@ class HistoryPage(QWidget):
             self._last_history = history
 
 
+CATEGORY_ORDER = ["media", "apps", "browser", "windows", "game", "filesystem", "developer"]
+
+CATEGORY_LABELS = {
+    "media": "Media",
+    "apps": "Apps",
+    "browser": "Browser",
+    "windows": "Windows",
+    "game": "Games",
+    "filesystem": "Filesystem",
+    "developer": "Developer",
+}
+
+PERMISSION_DISPLAY = {
+    # level -> (dot color, label). Pairs color with text per
+    # UI_UX_CONTEXT.md -- never color alone.
+    PermissionLevel.HARMLESS: ("#4fd18b", "Harmless"),
+    PermissionLevel.DISRUPTIVE: ("#e0a33c", "Disruptive"),
+    PermissionLevel.DESTRUCTIVE: ("#e0803c", "Destructive"),
+    PermissionLevel.DANGEROUS: ("#e0524f", "Dangerous"),
+}
+
+
+def _register_all_tools_for_display():
+    """Registration-for-DISPLAY only -- calling these just adds descriptive
+    ToolDefinition data to the Tool Registry's in-memory dict
+    (jairus/tools/registry.py); it never invokes any tool's underlying
+    function or wires anything into command dispatch. Safe to call
+    unconditionally and repeatedly: register_tool() is a plain
+    dict-assignment keyed by name, so re-registering is a no-op in effect.
+
+    Only register_media_tools() is ever called on the live app's startup
+    path today (assistant_loop.py's shadow-mode setup); the other six --
+    Phases 7/8/9/15/16/17's register_app_tools/register_browser_tools/
+    register_windows_tools/register_game_tools/register_filesystem_tools/
+    register_developer_tools -- are otherwise only called from each
+    phase's own tests. Without this call, this page would only be able to
+    show media.* tools.
+    """
+    register_media_tools()
+    register_app_tools()
+    register_browser_tools()
+    register_windows_tools()
+    register_game_tools()
+    register_filesystem_tools()
+    register_developer_tools()
+
+
+class ToolRow(QWidget):
+    """One registered tool: name, permission badge, an explicit
+    "Requires confirmation" tag when true, and its full description --
+    all always visible. Deliberately has no click handler: the complete
+    description is already shown inline, so there's nothing left for a
+    click to reveal, and no interaction surface that could later be
+    mistaken for -- or repurposed into -- a way to run the tool.
+    """
+
+    def __init__(self, tool, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        name_label = QLabel(tool.name)
+        name_label.setStyleSheet("color: #e8eaf0; font-size: 13px; font-weight: 600;")
+        top_row.addWidget(name_label)
+
+        color, text = PERMISSION_DISPLAY.get(tool.permission_level, PERMISSION_DISPLAY[PermissionLevel.HARMLESS])
+        badge = QLabel(f"<span style='color:{color};'>●</span> {text}")
+        badge.setStyleSheet("font-size: 11px; color: #c8cbdc;")
+        top_row.addWidget(badge)
+
+        if tool.requires_confirmation:
+            confirm_tag = QLabel("Requires confirmation")
+            confirm_tag.setStyleSheet(
+                "color: #c8cbdc; background-color: #262638; font-size: 10px; "
+                "padding: 1px 6px; border-radius: 3px;"
+            )
+            top_row.addWidget(confirm_tag)
+
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        desc_label = QLabel(tool.description)
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #9296a8; font-size: 12px;")
+        layout.addWidget(desc_label)
+
+        self.setStyleSheet("border-bottom: 1px solid #1c1c2c;")
+
+
+class ToolsPage(QWidget):
+    """Read-only catalog of every tool ever registered across this
+    project's capability phases (media/apps/browser/windows/games/
+    filesystem/developer) -- an inspection view, not a way to run
+    anything. No button or click handler anywhere on this page calls
+    execute_tool() or any tool's underlying function.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        _register_all_tools_for_display()
+
+        outer = QVBoxLayout(self)
+        heading = QLabel("Registered tools")
+        heading.setStyleSheet("color: #8a8fa3; font-size: 13px;")
+        outer.addWidget(heading)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+
+        tools = list_tools()
+        if not tools:
+            empty = QLabel("No tools are registered right now.")
+            empty.setStyleSheet("color: #9296a8; font-size: 13px;")
+            content_layout.addWidget(empty)
+        else:
+            by_category = {}
+            for tool in tools:
+                category = tool.name.split(".", 1)[0]
+                by_category.setdefault(category, []).append(tool)
+
+            for category in CATEGORY_ORDER:
+                if category not in by_category:
+                    continue
+                category_heading = QLabel(CATEGORY_LABELS.get(category, category.title()))
+                category_heading.setStyleSheet(
+                    "color: #e8eaf0; font-size: 14px; font-weight: 600; margin-top: 14px;"
+                )
+                content_layout.addWidget(category_heading)
+                for tool in sorted(by_category[category], key=lambda t: t.name):
+                    content_layout.addWidget(ToolRow(tool))
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+
 NAV_ITEMS = [
     # (label, enabled, tooltip-when-disabled)
     ("Home", True, None),
     ("History", True, None),
-    ("Tools", False, "Coming soon — no tools registered for voice control yet"),
+    ("Tools", True, None),
     ("Settings", False, "Coming soon — no configurable settings yet"),
 ]
 
@@ -326,8 +488,9 @@ class OrbWindow(QMainWindow):
 
         sidebar = Sidebar(central)
         self.stack = QStackedWidget(central)
-        self.stack.addWidget(HomePage(state, self.stack))     # row 0
+        self.stack.addWidget(HomePage(state, self.stack))  # row 0
         self.stack.addWidget(HistoryPage(state, self.stack))  # row 1
+        self.stack.addWidget(ToolsPage(self.stack))  # row 2
         sidebar.currentRowChanged.connect(self._on_nav_changed)
 
         layout.addWidget(sidebar)
@@ -342,8 +505,8 @@ class OrbWindow(QMainWindow):
         status_bar.addPermanentWidget(HealthIndicator(state, self))
 
     def _on_nav_changed(self, row):
-        # Only Home (0) and History (1) are real stack pages; Tools/Settings
-        # rows are disabled in the sidebar so this never fires for them.
+        # Home (0), History (1), Tools (2) are real stack pages; Settings
+        # is disabled in the sidebar so this never fires for that row.
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
 
