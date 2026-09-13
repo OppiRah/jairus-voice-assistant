@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -64,6 +64,8 @@ from jairus.tools import (
     register_windows_tools,
 )
 
+import theme
+
 SIDEBAR_WIDTH = 150
 
 EMPTY_HISTORY_TEXT = "Nothing yet — say \"hey jairus\" to get started"
@@ -87,13 +89,6 @@ WINDOW_SIZE = 480
 FPS = 60
 BASE_RADIUS = 70
 
-COLORS = {
-    "idle":      (70, 130, 200),   # calm blue
-    "listening": (60, 200, 140),   # green
-    "thinking":  (170, 90, 220),   # violet
-    "speaking":  (250, 170, 60),   # warm gold
-}
-
 
 class OrbWidget(QWidget):
     def __init__(self, state, parent=None):
@@ -110,10 +105,10 @@ class OrbWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        painter.fillRect(self.rect(), QColor(12, 12, 20))  # near-black background so the glow pops
+        painter.fillRect(self.rect(), QColor(theme.BG))  # near-black background so the glow pops
 
         status, level = self._state.get_snapshot()
-        color = COLORS.get(status, COLORS["idle"])
+        color = theme.ORB_COLORS.get(status, theme.ORB_COLORS["idle"])
         t = time.time() - self._start_time
         center = (self.width() // 2, self.height() // 2)
 
@@ -150,7 +145,7 @@ class OrbWidget(QWidget):
 
         # bright inner highlight for a bit of depth
         highlight_radius = max(4, int(core_radius * 0.35))
-        painter.setBrush(QColor(255, 255, 255))
+        painter.setBrush(QColor(theme.WHITE))
         painter.drawEllipse(
             center[0] - core_radius // 4 - highlight_radius,
             center[1] - core_radius // 4 - highlight_radius,
@@ -177,23 +172,20 @@ class ActivityPanel(QWidget):
         layout = QVBoxLayout(self)
 
         activity_heading = QLabel("Current activity")
-        activity_heading.setStyleSheet("color: #8a8fa3; font-size: 11px;")
+        activity_heading.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px;")
         layout.addWidget(activity_heading)
 
         self.activity_label = QLabel("Idle")
         self.activity_label.setWordWrap(True)
-        self.activity_label.setStyleSheet("color: #e8eaf0; font-size: 15px;")
+        self.activity_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 15px;")
         layout.addWidget(self.activity_label)
 
         history_heading = QLabel("Recent commands")
-        history_heading.setStyleSheet("color: #8a8fa3; font-size: 11px; margin-top: 12px;")
+        history_heading.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px; margin-top: {theme.SPACE_MD}px;")
         layout.addWidget(history_heading)
 
         self.history_list = QListWidget()
-        self.history_list.setStyleSheet(
-            "QListWidget { background-color: #14141f; color: #c8cbdc; "
-            "border: 1px solid #262638; font-size: 12px; }"
-        )
+        self.history_list.setStyleSheet("QListWidget { font-size: 12px; }")  # smaller than the app default; colors/border come from the global theme stylesheet
         layout.addWidget(self.history_list)
         _render_history_items(self.history_list, [])
 
@@ -240,14 +232,12 @@ class HistoryPage(QWidget):
         layout = QVBoxLayout(self)
 
         heading = QLabel("Recent commands")
-        heading.setStyleSheet("color: #8a8fa3; font-size: 13px;")
+        heading.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
         layout.addWidget(heading)
 
+        # Colors/border/font-size all come from the global theme stylesheet
+        # (matches the app's base font size, unlike ActivityPanel's smaller inline list).
         self.history_list = QListWidget()
-        self.history_list.setStyleSheet(
-            "QListWidget { background-color: #14141f; color: #c8cbdc; "
-            "border: 1px solid #262638; font-size: 13px; }"
-        )
         layout.addWidget(self.history_list)
         _render_history_items(self.history_list, [])
 
@@ -276,11 +266,13 @@ CATEGORY_LABELS = {
 
 PERMISSION_DISPLAY = {
     # level -> (dot color, label). Pairs color with text per
-    # UI_UX_CONTEXT.md -- never color alone.
-    PermissionLevel.HARMLESS: ("#4fd18b", "Harmless"),
-    PermissionLevel.DISRUPTIVE: ("#e0a33c", "Disruptive"),
-    PermissionLevel.DESTRUCTIVE: ("#e0803c", "Destructive"),
-    PermissionLevel.DANGEROUS: ("#e0524f", "Dangerous"),
+    # UI_UX_CONTEXT.md -- never color alone. Colors are theme.SUCCESS/
+    # WARNING/DESTRUCTIVE/ERROR -- unchanged values from Phase 5, just
+    # sourced from the shared theme module now.
+    PermissionLevel.HARMLESS: (theme.SUCCESS, "Harmless"),
+    PermissionLevel.DISRUPTIVE: (theme.WARNING, "Disruptive"),
+    PermissionLevel.DESTRUCTIVE: (theme.DESTRUCTIVE, "Destructive"),
+    PermissionLevel.DANGEROUS: (theme.ERROR, "Dangerous"),
 }
 
 
@@ -321,24 +313,24 @@ class ToolRow(QWidget):
     def __init__(self, tool, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(theme.SPACE_SM + 2, theme.SPACE_SM, theme.SPACE_SM + 2, theme.SPACE_SM)
+        layout.setSpacing(theme.SPACE_XS)
 
         top_row = QHBoxLayout()
         name_label = QLabel(tool.name)
-        name_label.setStyleSheet("color: #e8eaf0; font-size: 13px; font-weight: 600;")
+        name_label.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
         top_row.addWidget(name_label)
 
         color, text = PERMISSION_DISPLAY.get(tool.permission_level, PERMISSION_DISPLAY[PermissionLevel.HARMLESS])
         badge = QLabel(f"<span style='color:{color};'>●</span> {text}")
-        badge.setStyleSheet("font-size: 11px; color: #c8cbdc;")
+        badge.setStyleSheet(f"font-size: 11px; color: {theme.TEXT_SECONDARY};")
         top_row.addWidget(badge)
 
         if tool.requires_confirmation:
             confirm_tag = QLabel("Requires confirmation")
             confirm_tag.setStyleSheet(
-                "color: #c8cbdc; background-color: #262638; font-size: 10px; "
-                "padding: 1px 6px; border-radius: 3px;"
+                f"color: {theme.TEXT_SECONDARY}; background-color: {theme.BORDER}; font-size: 10px; "
+                f"padding: 1px {theme.SPACE_SM}px; border-radius: 3px;"
             )
             top_row.addWidget(confirm_tag)
 
@@ -347,10 +339,10 @@ class ToolRow(QWidget):
 
         desc_label = QLabel(tool.description)
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #9296a8; font-size: 12px;")
+        desc_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 12px;")
         layout.addWidget(desc_label)
 
-        self.setStyleSheet("border-bottom: 1px solid #1c1c2c;")
+        self.setStyleSheet(f"border-bottom: 1px solid {theme.SELECTED};")
 
 
 class ToolsPage(QWidget):
@@ -367,12 +359,12 @@ class ToolsPage(QWidget):
 
         outer = QVBoxLayout(self)
         heading = QLabel("Registered tools")
-        heading.setStyleSheet("color: #8a8fa3; font-size: 13px;")
+        heading.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
         outer.addWidget(heading)
 
+        # Border/background come from the global theme stylesheet's QScrollArea rule.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -380,7 +372,7 @@ class ToolsPage(QWidget):
         tools = list_tools()
         if not tools:
             empty = QLabel("No tools are registered right now.")
-            empty.setStyleSheet("color: #9296a8; font-size: 13px;")
+            empty.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
             content_layout.addWidget(empty)
         else:
             by_category = {}
@@ -393,7 +385,8 @@ class ToolsPage(QWidget):
                     continue
                 category_heading = QLabel(CATEGORY_LABELS.get(category, category.title()))
                 category_heading.setStyleSheet(
-                    "color: #e8eaf0; font-size: 14px; font-weight: 600; margin-top: 14px;"
+                    f"color: {theme.TEXT_PRIMARY}; font-size: 14px; font-weight: 600; "
+                    f"margin-top: {theme.SPACE_MD + 2}px;"
                 )
                 content_layout.addWidget(category_heading)
                 for tool in sorted(by_category[category], key=lambda t: t.name):
@@ -405,9 +398,6 @@ class ToolsPage(QWidget):
 
 
 WHISPER_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-
-LIVE_NOTE_COLOR = "#4fd18b"     # matches the Healthy color -- green means "just works"
-RESTART_NOTE_COLOR = "#e0a33c"  # matches the Ollama-unavailable amber -- needs an action first
 
 
 class SettingsPage(QWidget):
@@ -423,11 +413,11 @@ class SettingsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(4)
+        outer.setContentsMargins(theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG)
+        outer.setSpacing(theme.SPACE_XS)
 
         heading = QLabel("Settings")
-        heading.setStyleSheet("color: #e8eaf0; font-size: 16px; font-weight: 600;")
+        heading.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 16px; font-weight: 600;")
         outer.addWidget(heading)
 
         current = settings.all_settings()
@@ -501,20 +491,23 @@ class SettingsPage(QWidget):
         self.save_button.clicked.connect(self._save)
         save_row.addWidget(self.save_button)
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet(f"color: {LIVE_NOTE_COLOR}; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {theme.SUCCESS}; font-size: 12px;")
         save_row.addWidget(self.status_label)
         save_row.addStretch()
         outer.addLayout(save_row)
 
     def _section_label(self, text):
         label = QLabel(text)
-        label.setStyleSheet("color: #e8eaf0; font-size: 13px; font-weight: 600; margin-top: 12px;")
+        label.setStyleSheet(
+            f"color: {theme.TEXT_PRIMARY}; font-size: 13px; font-weight: 600; "
+            f"margin-top: {theme.SPACE_MD}px;"
+        )
         return label
 
     def _note(self, text, live: bool):
         label = QLabel(text)
         label.setWordWrap(True)
-        color = LIVE_NOTE_COLOR if live else RESTART_NOTE_COLOR
+        color = theme.SUCCESS if live else theme.WARNING
         label.setStyleSheet(f"color: {color}; font-size: 11px;")
         return label
 
@@ -556,14 +549,9 @@ class Sidebar(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(SIDEBAR_WIDTH)
-        self.setStyleSheet(
-            "QListWidget { background-color: #101018; color: #c8cbdc; "
-            "border: none; border-right: 1px solid #262638; font-size: 13px; "
-            "outline: 0; }"
-            "QListWidget::item { padding: 10px 14px; }"
-            "QListWidget::item:selected { background-color: #1c1c2c; color: #ffffff; }"
-            "QListWidget::item:disabled { color: #4a4d5e; }"
-        )
+        # Colors/spacing come from the global theme stylesheet's
+        # QListWidget#Sidebar rules (see theme.build_stylesheet()).
+        self.setObjectName("Sidebar")
         for label, enabled, tooltip in NAV_ITEMS:
             item = QListWidgetItem(label)
             if not enabled:
@@ -576,10 +564,11 @@ class Sidebar(QListWidget):
 
 HEALTH_DISPLAY = {
     # status -> (dot color, label). Honest backend health, not a network
-    # connection state -- this process isn't networked to anything.
-    "starting": ("#8a8fa3", "Starting…"),
-    "ollama_unavailable": ("#e0a33c", "Ollama unavailable"),
-    "healthy": ("#4fd18b", "Healthy"),
+    # connection state -- this process isn't networked to anything. Colors
+    # unchanged from Phase 3, now sourced from the shared theme module.
+    "starting": (theme.TEXT_MUTED, "Starting…"),
+    "ollama_unavailable": (theme.WARNING, "Ollama unavailable"),
+    "healthy": (theme.SUCCESS, "Healthy"),
 }
 
 
@@ -596,7 +585,7 @@ class HealthIndicator(QLabel):
         super().__init__(parent)
         self._state = state
         self._last_status = None
-        self.setStyleSheet("font-size: 12px; padding: 2px 6px;")
+        self.setStyleSheet(f"font-size: 12px; padding: {theme.SPACE_XS}px {theme.SPACE_SM}px;")
         self._refresh()
 
         self._timer = QTimer(self)
@@ -618,8 +607,8 @@ class OrbWindow(QMainWindow):
         self.setWindowTitle("Jairus")
         self.setMinimumSize(WINDOW_SIZE + 280 + SIDEBAR_WIDTH, WINDOW_SIZE)
 
+        # Background comes from the global theme stylesheet's QWidget rule.
         central = QWidget(self)
-        central.setStyleSheet("background-color: #0c0c14;")
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -636,11 +625,8 @@ class OrbWindow(QMainWindow):
         layout.addWidget(self.stack)
         self.setCentralWidget(central)
 
+        # Colors/border come from the global theme stylesheet's QStatusBar rule.
         status_bar = self.statusBar()
-        status_bar.setStyleSheet(
-            "QStatusBar { background-color: #0c0c14; color: #c8cbdc; "
-            "border-top: 1px solid #262638; }"
-        )
         status_bar.addPermanentWidget(HealthIndicator(state, self))
 
     def _on_nav_changed(self, row):
@@ -652,6 +638,15 @@ class OrbWindow(QMainWindow):
 
 def run_orb(state):
     app = QApplication.instance() or QApplication(sys.argv)
+
+    # Phase 7 (UI polish): one theme applied once at the QApplication level,
+    # rather than each page/widget picking its own font and repeating color
+    # literals. resolve_font_family() falls back gracefully if the
+    # preferred font isn't installed -- never crashes or silently fails.
+    font_family = theme.resolve_font_family()
+    app.setFont(QFont(font_family, theme.BASE_FONT_SIZE))
+    app.setStyleSheet(theme.build_stylesheet(font_family))
+
     window = OrbWindow(state)
     window.show()
     app.exec()
