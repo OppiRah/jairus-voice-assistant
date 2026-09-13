@@ -174,6 +174,44 @@ class ActivityPanel(QWidget):
         self.history_list.scrollToBottom()
 
 
+HEALTH_DISPLAY = {
+    # status -> (dot color, label). Honest backend health, not a network
+    # connection state -- this process isn't networked to anything.
+    "starting": ("#8a8fa3", "Starting…"),
+    "ollama_unavailable": ("#e0a33c", "Ollama unavailable"),
+    "healthy": ("#4fd18b", "Healthy"),
+}
+
+
+class HealthIndicator(QLabel):
+    """Small, unobtrusive backend-health readout: a colored dot paired with
+    plain-language text (never color alone) for whether Ollama is reachable
+    and the wake-word model/mic stream are up. Polled from AssistantState on
+    its own timer, same pattern as the orb and ActivityPanel.
+    """
+
+    POLL_INTERVAL_MS = 1000
+
+    def __init__(self, state, parent=None):
+        super().__init__(parent)
+        self._state = state
+        self._last_status = None
+        self.setStyleSheet("font-size: 12px; padding: 2px 6px;")
+        self._refresh()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(self.POLL_INTERVAL_MS)
+
+    def _refresh(self):
+        status = self._state.get_health_status()
+        if status == self._last_status:
+            return
+        color, text = HEALTH_DISPLAY.get(status, HEALTH_DISPLAY["starting"])
+        self.setText(f"<span style='color:{color};'>●</span> {text}")
+        self._last_status = status
+
+
 class OrbWindow(QMainWindow):
     def __init__(self, state):
         super().__init__()
@@ -186,6 +224,13 @@ class OrbWindow(QMainWindow):
         layout.addWidget(OrbWidget(state, central))
         layout.addWidget(ActivityPanel(state, central))
         self.setCentralWidget(central)
+
+        status_bar = self.statusBar()
+        status_bar.setStyleSheet(
+            "QStatusBar { background-color: #0c0c14; color: #c8cbdc; "
+            "border-top: 1px solid #262638; }"
+        )
+        status_bar.addPermanentWidget(HealthIndicator(state, self))
 
 
 def run_orb(state):

@@ -17,6 +17,10 @@ happening (idle / listening / thinking / speaking) and pulse with live or
 animated audio level.
 """
 
+import threading
+import time
+
+import requests
 import sounddevice as sd
 import numpy as np
 import openwakeword
@@ -103,12 +107,37 @@ SAMPLE_RATE = 16000
 DETECTION_THRESHOLD = 0.5
 CHUNK_SIZE = 1280  # openwakeword expects 80ms chunks at 16kHz
 
+# Phase 3 (UI): backend health check — same Ollama instance intent_parser.py
+# talks to, just its lightweight root endpoint instead of /api/generate, so
+# checking reachability never loads a model or costs a real inference call.
+OLLAMA_HEALTH_URL = "http://localhost:11434/"
+HEALTH_CHECK_INTERVAL_SECONDS = 10
+
 
 def _wake_word_key() -> str:
     if WAKE_WORD_MODEL.endswith((".onnx", ".tflite")):
         import os
         return os.path.splitext(os.path.basename(WAKE_WORD_MODEL))[0]
     return WAKE_WORD_MODEL
+
+
+def _check_ollama_reachable() -> bool:
+    try:
+        response = requests.get(OLLAMA_HEALTH_URL, timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _health_check_loop(state):
+    """Runs on its own daemon thread so a slow/unreachable Ollama never
+    blocks the UI thread or the assistant's listen loop. Makes the existing
+    silent Ollama-down fallback (intent_parser.py) visible instead of only
+    showing up in terminal logs.
+    """
+    while True:
+        state.set_ollama_reachable(_check_ollama_reachable())
+        time.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
 
 
 def handle_command(text: str, context: ConversationContext, state):
@@ -199,9 +228,12 @@ def handle_command(text: str, context: ConversationContext, state):
 
 
 def run_assistant(state):
+    threading.Thread(target=_health_check_loop, args=(state,), daemon=True).start()
+
     print("[init] downloading/loading openwakeword models (first run only)...")
     openwakeword.utils.download_models()
     oww_model = Model(wakeword_models=[WAKE_WORD_MODEL])
+    state.set_model_loaded(True)
     wake_key = _wake_word_key()
     context = ConversationContext()
     conversation_id = str(uuid.uuid4())  # one per program run; ConversationContext also resets per run
@@ -220,6 +252,7 @@ def run_assistant(state):
 
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=CHUNK_SIZE)
     stream.start()
+    state.set_mic_active(True)
     state.set_status("idle")
 
     try:
@@ -267,5 +300,6 @@ def run_assistant(state):
     except KeyboardInterrupt:
         print("\n[stop] shutting down")
     finally:
+        state.set_mic_active(False)
         stream.stop()
         stream.close()
