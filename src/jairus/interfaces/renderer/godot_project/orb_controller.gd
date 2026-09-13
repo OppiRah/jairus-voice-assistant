@@ -26,6 +26,28 @@ extends Node3D
 ## backend data for it exists. Text fades out/swaps/fades in via a Tween
 ## rather than cutting instantly, and is tinted from the same _current_color
 ## driving the rest of the orb (brightened toward white for legibility).
+##
+## Pass A -- redesigned core (per ORB_CONCEPT_GAP_ANALYSIS.md's two named
+## core problems): the former plain "Core" sphere is now the innermost
+## layer of three: CoreEmblem (a flat, opaque, procedurally-built 4-point
+## star -- same asset-free SurfaceTool technique as the energy arcs, since
+## no existing Jairus brand mark was found anywhere in the repo) sits just
+## in front of Core (now the "glow" sphere, shrunk to make room), which
+## itself sits inside CoreHousing, a shell reusing the same validated
+## Fresnel technique as the outer glass shells (orb_glass_shell.gdshader)
+## but inverted in intent: dark near-opaque at the rim (a real silhouette,
+## "housing"), transparent at center (so the glow/emblem read through it)
+## -- the only geometrically-correct way to get "dark shell around visible
+## inner glow" with concentric same-center spheres, since two solid
+## same-center spheres of different opaque radii can never produce a
+## visible rim (the larger one, whichever color, fully occludes the
+## smaller one from every angle -- verified by working through the
+## near-surface-distance math before building this, not assumed). This
+## also fixes the measured core/arc emission-hierarchy inversion the gap
+## analysis found: ARC_EMISSION_ENERGY is lowered and new
+## CORE_GLOW_EMISSION_ENERGY/CORE_EMBLEM_EMISSION_ENERGY constants (times
+## each state's new core_intensity) are set so the core outbrights the
+## arcs in every one of the 9 states, not just at baseline.
 
 const WS_URL := "ws://localhost:8767"
 
@@ -43,7 +65,24 @@ const POP_DURATION_SECONDS := 1.0
 const POP_EMISSION_BOOST := 2.5  # extra emission_energy_multiplier at the instant the pop starts
 const POP_GLOW_BOOST := 0.8      # extra glow_intensity at the instant the pop starts
 
-const EMISSION_ENERGY := 3.5  # baseline HDR multiplier so the core color actually blooms (unchanged from the PoC)
+const EMISSION_ENERGY := 3.5  # baseline HDR multiplier for particles/rings only now -- see CORE_GLOW_EMISSION_ENERGY below for the core itself (Pass A split this out so the core could be raised independently)
+
+# Pass A core-emission constants: the core (glow sphere + emblem, combined)
+# must outbloom the energy arcs in every one of the 9 states, including
+# ERROR (arc_intensity's highest value, 1.8) -- not just at idle baseline,
+# which is exactly the bug the gap analysis measured (arcs previously used
+# a flat 4.0 base, higher than the core's flat 3.5, in every state). Checked
+# by hand across all 9 STATE_PROFILES rows below: with ARC_EMISSION_ENERGY
+# lowered to 2.2, the worst-case arc value is error's 2.2*1.8=3.96, while
+# the worst-case *core* value is offline's 6.0*0.2=1.2 for the glow sphere
+# alone -- still comfortably ahead of every arc value except offline, where
+# offline's own arc_frequency is 0.0 (arcs never actually become visible
+# there at all, per _update_arcs()'s existing flicker-threshold logic) and
+# the emblem alone (9.0*0.2=1.8) still exceeds it. See this pass's own
+# report for the full per-state table.
+const CORE_GLOW_EMISSION_ENERGY := 6.0
+const CORE_EMBLEM_EMISSION_ENERGY := 9.0  # the emblem is always the single brightest element in the scene -- it's the intended focal point
+const CORE_EMBLEM_BRIGHTEN := 0.55  # lerp weight toward Color.WHITE, same legibility technique already used for ActivityLabel -- keeps the symbol reading as a sharp, distinct mark rather than just another same-hue glow
 
 # Rings: RingB always rotates at RING_B_SPEED_FACTOR times RingA's speed
 # (and RingA/RingB spin around different axes -- set once in _ready() via
@@ -81,7 +120,7 @@ const ARC_JAGGEDNESS := 0.08      # max perpendicular offset applied to interior
 const ARC_THICKNESS := 0.015      # ribbon half-width
 const ARC_ROTATION_SPEED := 0.35  # rad/s, both arcs rotate at this fixed rate regardless of state (only visibility/brightness vary per state)
 const ARC_FLICKER_THRESHOLD := 0.3  # sin(...) must exceed this to be visible -- higher = rarer/shorter flashes at a given frequency
-const ARC_EMISSION_ENERGY := 4.0  # baseline HDR multiplier for arc material, independent of the core's EMISSION_ENERGY
+const ARC_EMISSION_ENERGY := 2.2  # Pass A: lowered from 4.0 -- at the old value the arcs out-bloomed the core in every state (a measured bug, see CORE_GLOW_EMISSION_ENERGY above); this baseline, times arc_intensity (max 1.8 at error), now stays under the core's floor in every state
 
 # Activity text overlay: shows the real "activity" string the bridge sends
 # (assistant_state.py's _current_activity, defaulting to "Idle" -- matched
@@ -163,10 +202,37 @@ const GLASS_SHELL_CONFIGS := [
 # sorting being unreliable when multiple transparent objects share (near
 # enough) the same center -- exactly this scene's shape now that there are
 # 4 more concentric objects than before.
+const RENDER_PRIORITY_CORE_HOUSING := -8  # innermost transparent object in the scene (radius 0.64, smaller than the arcs' 0.75) -- drawn first, per the same "innermost first" convention as everything below
 const RENDER_PRIORITY_ARCS := -6
 const RENDER_PRIORITY_PARTICLES := -2
 const RENDER_PRIORITY_RING_A := 0
 const RENDER_PRIORITY_RING_B := 1
+
+# CoreHousing reuses GLASS_SHELL_SHADER (same Fresnel technique as the 4
+# outer glass shells) but with the *opposite* visual intent: dark and
+# near-opaque at the rim (a real, deliberate silhouette -- "housing"),
+# transparent at center (so the glow sphere and emblem inside read
+# through it, unobstructed). A high fresnel_power keeps that rim tight
+# and sharp rather than a soft glass-like gradient, and lens_distortion
+# is left at 0 -- a dark shell has no reason to visibly warp anything
+# behind it, unlike the bright outer shells where the lensing reads as
+# part of the "glass" material language.
+const CORE_HOUSING_BASE_COLOR := Color(0.04, 0.045, 0.06)
+const CORE_HOUSING_FRESNEL_POWER := 4.5
+const CORE_HOUSING_RIM_ALPHA := 0.92
+const CORE_HOUSING_CORE_ALPHA := 0.08
+const CORE_HOUSING_LENS_DISTORTION := 0.0
+
+# CoreEmblem: a flat, opaque, 4-point "sparkle" star built once via
+# SurfaceTool (same asset-free approach _build_arc_mesh() already uses) --
+# see this pass's report for why no existing Jairus mark was reused (none
+# exists in the repo). Positioned just outside the glow sphere's own front
+# surface (glow radius 0.5, see SphereMesh_core in orb_scene.tscn) so it's
+# never occluded by the opaque glow sphere behind it.
+const EMBLEM_OUTER_RADIUS := 0.32
+const EMBLEM_INNER_RADIUS := 0.09
+const EMBLEM_POINTS := 4
+const EMBLEM_Z_OFFSET := 0.53
 
 # One row per real AssistantStatus value -- every value that makes a
 # state FEEL different, not just a different color, lives here as a
@@ -200,6 +266,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.15, "ring_opacity": 0.35,
 		"arc_intensity": 1.0, "arc_frequency": 0.15,
 		"glass_rim_intensity": 1.0, "glass_lens_strength": 1.0,
+		"core_intensity": 1.0,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -209,6 +276,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.25, "ring_opacity": 0.45,
 		"arc_intensity": 1.2, "arc_frequency": 0.3,
 		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.1,
+		"core_intensity": 1.05,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -218,6 +286,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.6, "ring_opacity": 0.5,
 		"arc_intensity": 1.4, "arc_frequency": 0.8,
 		"glass_rim_intensity": 1.3, "glass_lens_strength": 1.6,
+		"core_intensity": 1.15,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -227,6 +296,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.2, "ring_opacity": 0.4,
 		"arc_intensity": 1.3, "arc_frequency": 0.4,
 		"glass_rim_intensity": 1.15, "glass_lens_strength": 1.1,
+		"core_intensity": 1.05,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -236,6 +306,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.7, "ring_opacity": 0.55,
 		"arc_intensity": 1.5, "arc_frequency": 0.5,
 		"glass_rim_intensity": 1.4, "glass_lens_strength": 1.3,
+		"core_intensity": 1.2,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -245,6 +316,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.3, "ring_opacity": 0.5,
 		"arc_intensity": 1.6, "arc_frequency": 0.2,
 		"glass_rim_intensity": 1.2, "glass_lens_strength": 0.8,
+		"core_intensity": 1.1,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -254,6 +326,7 @@ const STATE_PROFILES := {
 		"ring_speed": 1.4, "ring_opacity": 0.6,
 		"arc_intensity": 1.8, "arc_frequency": 1.5,
 		"glass_rim_intensity": 1.6, "glass_lens_strength": 2.0,
+		"core_intensity": 1.3,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -263,6 +336,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.02, "ring_opacity": 0.1,
 		"arc_intensity": 0.3, "arc_frequency": 0.0,
 		"glass_rim_intensity": 0.15, "glass_lens_strength": 0.1,
+		"core_intensity": 0.2,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -272,6 +346,7 @@ const STATE_PROFILES := {
 		"ring_speed": 0.2, "ring_opacity": 0.4,
 		"arc_intensity": 1.1, "arc_frequency": 0.25,
 		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.0,
+		"core_intensity": 1.05,
 	},
 }
 
@@ -284,6 +359,8 @@ const STATE_PROFILES := {
 @onready var arc_b: MeshInstance3D = $ArcB
 @onready var activity_label: Label = $UI/ActivityLabel
 @onready var glass_shells: Array[MeshInstance3D] = [$GlassShell1, $GlassShell2, $GlassShell3, $GlassShell4]
+@onready var core_housing: MeshInstance3D = $CoreHousing
+@onready var core_emblem: MeshInstance3D = $CoreEmblem
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -303,6 +380,8 @@ var _particle_material: StandardMaterial3D
 var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
 var _activity_tween: Tween
 var _glass_materials: Array[ShaderMaterial] = []
+var _housing_material: ShaderMaterial
+var _emblem_material: StandardMaterial3D
 
 
 func _ready() -> void:
@@ -312,6 +391,29 @@ func _ready() -> void:
 	core.set_surface_override_material(0, _material)
 	_environment = world_environment.environment
 	_apply_color(_current_color)
+
+	# Pass A: CoreHousing (dark Fresnel-rim shell, see its constants' own
+	# comment for why this is the correct technique) and CoreEmblem (a
+	# flat, opaque, procedurally-built mark) redesign what "the core" reads
+	# as. Both wired here, in the same spot the other geometry passes set
+	# their own new nodes up.
+	_housing_material = ShaderMaterial.new()
+	_housing_material.shader = GLASS_SHELL_SHADER
+	_housing_material.render_priority = RENDER_PRIORITY_CORE_HOUSING
+	_housing_material.set_shader_parameter("base_color", CORE_HOUSING_BASE_COLOR)
+	_housing_material.set_shader_parameter("fresnel_power", CORE_HOUSING_FRESNEL_POWER)
+	_housing_material.set_shader_parameter("rim_alpha", CORE_HOUSING_RIM_ALPHA)
+	_housing_material.set_shader_parameter("core_alpha", CORE_HOUSING_CORE_ALPHA)
+	_housing_material.set_shader_parameter("lens_distortion", CORE_HOUSING_LENS_DISTORTION)
+	core_housing.set_surface_override_material(0, _housing_material)
+
+	_emblem_material = StandardMaterial3D.new()
+	_emblem_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_emblem_material.emission_enabled = true
+	_emblem_material.cull_mode = BaseMaterial3D.CULL_DISABLED  # same defensive choice as the arcs -- a flat mesh should stay visible even if something later gives it any rotation
+	core_emblem.mesh = _build_emblem_mesh()
+	core_emblem.position = Vector3(0.0, 0.0, EMBLEM_Z_OFFSET)
+	core_emblem.set_surface_override_material(0, _emblem_material)
 
 	# AmbientParticles previously drew with no material at all (its
 	# SphereMesh_particle draw pass had no surface material assigned), so it
@@ -359,8 +461,9 @@ func _ready() -> void:
 		shell.set_surface_override_material(0, mat)
 		_glass_materials.append(mat)
 
-	print("[orb_controller] geometry ready: RingA/RingB (TorusMesh), ArcA vertices=%d, ArcB vertices=%d, glass shells=%d" % [
+	print("[orb_controller] geometry ready: RingA/RingB (TorusMesh), ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d" % [
 		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
+		EMBLEM_POINTS, core_emblem.mesh.surface_get_array_len(0),
 	])
 
 	var err := _socket.connect_to_url(WS_URL)
@@ -433,6 +536,40 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 	return st.commit()
 
 
+## Builds the Jairus emblem as a flat, opaque, 4-point "sparkle" star (a
+## triangle fan: one center vertex, EMBLEM_POINTS*2 rim vertices
+## alternating between EMBLEM_OUTER_RADIUS tips and EMBLEM_INNER_RADIUS
+## concave valleys) in the local XY plane -- SurfaceTool, no external
+## asset, same reasoning as _build_arc_mesh() above for why a hand-built
+## mesh was chosen over a shader or CSG. No existing Jairus brand mark was
+## found anywhere in the repo (checked the Qt app's icon usage in
+## theme.py, which only ever uses generic qtawesome/Font Awesome glyphs,
+## and searched for any *.ico/*logo*/*emblem*/*brand* asset file -- none
+## exist), so this is a clean, simple, unambiguous geometric mark rather
+## than an attempt at a new logo design, per this pass's own scope.
+func _build_emblem_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var center := Vector3.ZERO
+	var rim_count := EMBLEM_POINTS * 2
+	var rim: PackedVector3Array = []
+	for i in range(rim_count):
+		var angle := float(i) / float(rim_count) * TAU
+		var r := EMBLEM_OUTER_RADIUS if i % 2 == 0 else EMBLEM_INNER_RADIUS
+		rim.append(Vector3(cos(angle) * r, sin(angle) * r, 0.0))
+
+	for i in range(rim_count):
+		var a := rim[i]
+		var b := rim[(i + 1) % rim_count]
+		st.add_vertex(center)
+		st.add_vertex(a)
+		st.add_vertex(b)
+
+	st.generate_normals()  # PRIMITIVE_TRIANGLES supports this (unlike _build_arc_mesh()'s strip) -- harmless since the material is unshaded anyway, but free and correct
+	return st.commit()
+
+
 func _process(delta: float) -> void:
 	_elapsed += delta
 	_poll_socket()
@@ -448,6 +585,14 @@ func _process(delta: float) -> void:
 	var breathe := _compute_breathe(profile["pulse_speed"], profile["pulse_irregular"])
 	var pulse_scale := 1.0 + 0.12 * breathe + 0.25 * _level
 	core.scale = Vector3.ONE * pulse_scale
+	# CoreEmblem breathes with the glow (it's part of the same "energy"
+	# reading) -- CoreHousing deliberately does NOT scale with the pulse at
+	# all (stays Vector3.ONE, its .tscn default): per the design doc's own
+	# material-contrast principle (glass/metal.md section 8), mechanical
+	# components should read as "controlled" while energy components
+	# "animate" -- a rigid, non-pulsing housing around a breathing glow is
+	# exactly that contrast, not an oversight.
+	core_emblem.scale = Vector3.ONE * pulse_scale
 
 	var particle_baseline: float = profile["particle_amount"]
 	if particles:
@@ -459,22 +604,31 @@ func _process(delta: float) -> void:
 
 	var glow_intensity: float = profile["glow_intensity"]
 	var glow_strength: float = profile["glow_strength"]
-	var emission_energy := EMISSION_ENERGY
+	var core_intensity: float = profile.get("core_intensity", 1.0)
+	var glow_emission := CORE_GLOW_EMISSION_ENERGY * core_intensity
+	var emblem_emission := CORE_EMBLEM_EMISSION_ENERGY * core_intensity
 
 	if _pop_remaining > 0.0:
 		_pop_remaining = max(0.0, _pop_remaining - delta)
 		var pop_factor := _pop_remaining / POP_DURATION_SECONDS  # 1.0 the instant it starts, linearly down to 0.0
 		glow_intensity += POP_GLOW_BOOST * pop_factor
-		emission_energy += POP_EMISSION_BOOST * pop_factor
+		glow_emission += POP_EMISSION_BOOST * pop_factor
+		emblem_emission += POP_EMISSION_BOOST * pop_factor
 
 	if _environment:
 		_environment.glow_intensity = glow_intensity
 		_environment.glow_strength = glow_strength
-	_material.emission_energy_multiplier = emission_energy
+	_material.emission_energy_multiplier = glow_emission
+
+	var emblem_color := _current_color.lerp(Color.WHITE, CORE_EMBLEM_BRIGHTEN)
+	_emblem_material.albedo_color = emblem_color
+	_emblem_material.emission = emblem_color
+	_emblem_material.emission_energy_multiplier = emblem_emission
 
 	_update_rings(delta, profile)
 	_update_arcs(delta, profile)
 	_update_glass_shells(profile)
+	_update_core_housing()
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -543,6 +697,20 @@ func _update_glass_shells(profile: Dictionary) -> void:
 		mat.set_shader_parameter("lens_distortion", GLASS_LENS_DISTORTION_BASE * lens_strength)
 
 
+## CoreHousing's base_color gets only a faint tint of _current_color (15%)
+## on top of its fixed dark base -- enough for the "controlled highlights"
+## the design doc asks of mechanical components (the housing visibly
+## belongs to the current state's color story) without turning it into
+## another bright emissive layer (EMISSION in orb_glass_shell.gdshader is
+## derived directly from base_color, so keeping base_color mostly dark
+## keeps emission mostly dark too). No STATE_PROFILES field needed for
+## this -- it rides on the same _current_color every other element
+## already reacts to.
+func _update_core_housing() -> void:
+	var tinted := CORE_HOUSING_BASE_COLOR.lerp(_current_color, 0.15)
+	_housing_material.set_shader_parameter("base_color", tinted)
+
+
 func _compute_breathe(pulse_speed: float, irregular: bool) -> float:
 	var freq := BASE_PULSE_FREQUENCY * pulse_speed
 	if irregular:
@@ -597,6 +765,18 @@ func _handle_message(raw_text: String) -> void:
 			new_state, profile["pulse_speed"], profile["pulse_irregular"], profile["particle_amount"],
 			profile["particle_speed"], profile["glow_intensity"], profile["glow_strength"],
 			profile["ring_speed"], profile["ring_opacity"], profile["arc_intensity"], profile["arc_frequency"],
+		])
+		# Pass A hierarchy check, logged every state entry so it's directly
+		# verifiable from the console/OS log rather than only asserted in a
+		# comment: core_glow/core_emblem must both exceed arc_peak in every
+		# line this ever prints.
+		var core_intensity: float = profile.get("core_intensity", 1.0)
+		var core_glow_emission := CORE_GLOW_EMISSION_ENERGY * core_intensity
+		var core_emblem_emission := CORE_EMBLEM_EMISSION_ENERGY * core_intensity
+		var arc_peak_emission := ARC_EMISSION_ENERGY * float(profile["arc_intensity"])
+		print("[orb_controller] Pass A emission hierarchy for '%s' -> core_glow=%.2f core_emblem=%.2f arc_peak=%.2f (core_intensity=%.2f) -- core_wins=%s" % [
+			new_state, core_glow_emission, core_emblem_emission, arc_peak_emission, core_intensity,
+			core_glow_emission > arc_peak_emission and core_emblem_emission > arc_peak_emission,
 		])
 
 	_current_state = new_state
