@@ -2,6 +2,35 @@
 transcribe.py — turns recorded audio into text using faster-whisper (local, GPU-accelerated)
 """
 
+import os
+import sysconfig
+
+
+def _add_cuda_dll_dirs():
+    """The pip-installed nvidia-*-cu12 packages (cublas/cudnn/etc.) ship their
+    DLLs under site-packages/nvidia/<pkg>/bin, but ctranslate2's native loader
+    resolves them by bare filename via the classic PATH-based search, not
+    Python's os.add_dll_directory registry -- so those folders must be on
+    PATH before ctranslate2 (imported via faster_whisper below) loads, or
+    GPU inference fails with "Library cublas64_12.dll is not found".
+    """
+    if os.name != "nt":
+        return
+    nvidia_dir = os.path.join(sysconfig.get_paths()["purelib"], "nvidia")
+    if not os.path.isdir(nvidia_dir):
+        return
+    bin_dirs = []
+    for pkg in os.listdir(nvidia_dir):
+        bin_dir = os.path.join(nvidia_dir, pkg, "bin")
+        if os.path.isdir(bin_dir):
+            bin_dirs.append(bin_dir)
+            os.add_dll_directory(bin_dir)
+    if bin_dirs:
+        os.environ["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + os.environ["PATH"]
+
+
+_add_cuda_dll_dirs()
+
 import numpy as np
 from faster_whisper import WhisperModel
 
