@@ -120,42 +120,78 @@ def handle_command(text: str, context: ConversationContext, state):
     try:
         if action == "play" and intent.get("title"):
             query = f"{intent.get('title', '')} {intent.get('artist', '')}".strip()
-            speak(f"Playing {query}", state)
+            activity_text = f"Playing {query}"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
             play_song(intent)
         elif action == "queue":
             songs = intent.get("songs", [])
             if songs:
-                speak(f"Queuing up {len(songs)} songs", state)
+                activity_text = f"Queuing up {len(songs)} songs"
+                speak(activity_text, state)
+                state.set_current_activity(activity_text)
+                state.add_history_entry(activity_text)
                 start_queue(songs)
             else:
-                speak("Couldn't come up with a playlist for that", state)
+                activity_text = "Couldn't come up with a playlist for that"
+                speak(activity_text, state)
+                state.set_current_activity(activity_text)
+                state.add_history_entry(activity_text)
         elif action == "pause":
             pause_music()
-            speak("Paused", state)
+            activity_text = "Paused"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "resume":
             resume_music()
-            speak("Resumed", state)
+            activity_text = "Resumed"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "skip":
             skip_music()
-            speak("Skipped", state)
+            activity_text = "Skipped"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "correct":
             switched = correct_song()
-            speak("How about this one" if switched else "That was the last option I found", state)
+            activity_text = "How about this one" if switched else "That was the last option I found"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "volume_up":
             adjust_volume("up")
-            speak("Turned it up", state)
+            activity_text = "Turned it up"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "volume_down":
             adjust_volume("down")
-            speak("Turned it down", state)
+            activity_text = "Turned it down"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         elif action == "whats_playing":
             now_playing = get_now_playing()
-            speak(f"This is {now_playing}" if now_playing else "Nothing's playing right now", state)
+            activity_text = f"This is {now_playing}" if now_playing else "Nothing's playing right now"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
         else:
             print("[skip] couldn't figure out a command from that")
-            speak("Didn't catch that", state)
+            activity_text = "Didn't catch that"
+            speak(activity_text, state)
+            state.set_current_activity(activity_text)
+            state.add_history_entry(activity_text)
     except Exception as e:
         print(f"[player] something went wrong ({e})")
-        speak("Something went wrong", state)
+        activity_text = "Something went wrong"
+        speak(activity_text, state)
+        state.set_current_activity(activity_text)
+        state.add_history_entry(activity_text)
         return False
 
     context.add_turn(text, intent)
