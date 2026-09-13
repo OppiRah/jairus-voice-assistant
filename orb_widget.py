@@ -65,6 +65,7 @@ from jairus.tools import (
 )
 
 import theme
+from assistant_state import AssistantStatus
 
 SIDEBAR_WIDTH = 150
 
@@ -113,7 +114,7 @@ class OrbWidget(QWidget):
         painter.fillRect(self.rect(), QColor(theme.BG))  # near-black background so the glow pops
 
         status, level = self._state.get_snapshot()
-        color = theme.ORB_COLORS.get(status, theme.ORB_COLORS["idle"])
+        color = theme.ORB_COLORS.get(status, theme.ORB_COLORS[AssistantStatus.IDLE])
         t = time.time() - self._start_time
         center = (self.width() // 2, self.height() // 2)
 

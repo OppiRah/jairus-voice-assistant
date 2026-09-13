@@ -23,6 +23,8 @@ coherent scale.
 from PySide6.QtGui import QFont, QFontDatabase
 import qtawesome as qta
 
+from assistant_state import AssistantStatus
+
 # ---- Neutral / structural colors --------------------------------------
 # A subtle three-step elevation scale that had already emerged across
 # Phases 1-6 (window background < sidebar < input/list fields) -- kept as
@@ -49,12 +51,31 @@ WARNING = "#e0a33c"      # Ollama unavailable (Phase 3) / Disruptive (Phase 5) /
 DESTRUCTIVE = "#e0803c"  # Destructive permission tier (Phase 5)
 ERROR = "#e0524f"        # Dangerous permission tier (Phase 5)
 
-# ---- Orb per-state colors (Phase 1), unchanged --------------------------
+# ---- Orb per-state colors --------------------------------------------
+# idle/listening/thinking/speaking are Phase 1's original four, values
+# unchanged. executing/completed/error/offline are new (status-model
+# expansion) -- each picked to stay visually distinct from all the others
+# on the same orb, not reused from theme.SUCCESS/WARNING/etc. (those name
+# different concepts -- health/permission badges -- and reusing them here
+# risked visually blending with existing orb colors, e.g. theme.SUCCESS is
+# nearly the same green as "listening"). error reuses theme.ERROR's exact
+# RGB on purpose: red already means "error/dangerous" everywhere else in
+# this app, so the orb should agree. offline reuses theme.TEXT_DISABLED's
+# RGB for the same reason: it already means "de-emphasized/inactive".
+# waiting_confirmation has no real trigger yet (see
+# ASSISTANT_STATUS_MODEL.md) and deliberately has no entry here --
+# ORB_COLORS.get()'s existing fallback to idle already covers it safely
+# if that ever changes, rather than inventing a color for a state that
+# can't currently be observed.
 ORB_COLORS = {
-    "idle": (70, 130, 200),
-    "listening": (60, 200, 140),
-    "thinking": (170, 90, 220),
-    "speaking": (250, 170, 60),
+    AssistantStatus.IDLE: (70, 130, 200),
+    AssistantStatus.LISTENING: (60, 200, 140),
+    AssistantStatus.THINKING: (170, 90, 220),
+    AssistantStatus.SPEAKING: (250, 170, 60),
+    AssistantStatus.EXECUTING: (60, 190, 210),
+    AssistantStatus.COMPLETED: (210, 250, 225),
+    AssistantStatus.ERROR: (224, 82, 79),     # same RGB as theme.ERROR ("#e0524f")
+    AssistantStatus.OFFLINE: (74, 77, 94),    # same RGB as theme.TEXT_DISABLED ("#4a4d5e")
 }
 
 # ---- Spacing scale -------------------------------------------------------

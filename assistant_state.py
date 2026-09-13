@@ -8,14 +8,42 @@ what it most recently said/did, and a bounded history of recent activity.
 import threading
 import time
 from collections import deque
+from enum import StrEnum
 
 HISTORY_MAXLEN = 20
+
+
+class AssistantStatus(StrEnum):
+    """The assistant's status vocabulary -- a real enum (not bare strings),
+    expanded from the original 4 values toward UI_UX_CONTEXT.md's target
+    model. See ASSISTANT_STATUS_MODEL.md for the full investigation this
+    was built from: which states have a real trigger point in the live
+    handle_command()/assistant_loop.py code path today, which don't, and
+    why SPEAKING (not in the originally-requested 8) and OFFLINE (derived
+    from Phase 3's health signals rather than its own trigger) are handled
+    the way they are.
+
+    Members are plain strings under the hood (StrEnum), so every existing
+    caller that already passes a raw string (tts.py's
+    `state.set_status("speaking")`, in particular) keeps working
+    unchanged -- AssistantStatus.SPEAKING == "speaking" is True.
+    """
+
+    IDLE = "idle"
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"                          # real, existing (tts.py) -- kept as its own value, see report/doc
+    EXECUTING = "executing"                        # real trigger: handle_command()'s action-performing calls
+    WAITING_CONFIRMATION = "waiting_confirmation"  # vocabulary only -- no real trigger exists yet (Policy Engine is shadow-only)
+    COMPLETED = "completed"                        # real trigger: end of a successful handle_command() run
+    ERROR = "error"                                # real trigger: handle_command()'s existing except block
+    OFFLINE = "offline"                            # derived from mic_active, not its own set_status() call -- see get_snapshot()
 
 
 class AssistantState:
     def __init__(self):
         self._lock = threading.Lock()
-        self._status = "idle"   # idle | listening | thinking | speaking
+        self._status = AssistantStatus.IDLE
         self._level = 0.0       # 0.0-1.0, drives how much the orb pulses
         self._current_activity = "Idle"
         self._history = deque(maxlen=HISTORY_MAXLEN)
@@ -23,7 +51,7 @@ class AssistantState:
         self._mic_active = False      # mic input stream is open and running
         self._ollama_reachable = True  # optimistic until the first health check completes
 
-    def set_status(self, status: str):
+    def set_status(self, status):
         with self._lock:
             self._status = status
 
@@ -44,7 +72,18 @@ class AssistantState:
             })
 
     def get_snapshot(self):
+        """Returns (status, level). OFFLINE is derived here, not set via
+        set_status(): if the mic stream isn't active, the real-time loop
+        genuinely isn't running (still starting up, or the assistant
+        thread crashed/exited) -- OFFLINE is a more honest description of
+        that than whatever `_status` happens to still hold from before,
+        and it reuses the exact signal Phase 3 already tracks for this
+        (`_mic_active`) instead of a second, disconnected way of saying
+        the same thing.
+        """
         with self._lock:
+            if not self._mic_active:
+                return AssistantStatus.OFFLINE, self._level
             return self._status, self._level
 
     def get_activity_snapshot(self):

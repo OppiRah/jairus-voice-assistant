@@ -52,6 +52,7 @@ _SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from assistant_state import AssistantStatus
 from jairus.configuration import settings
 from jairus.interfaces.voice import submit_voice_command
 
@@ -117,6 +118,13 @@ CHUNK_SIZE = 1280  # openwakeword expects 80ms chunks at 16kHz
 OLLAMA_HEALTH_URL = "http://localhost:11434/"
 HEALTH_CHECK_INTERVAL_SECONDS = 10
 
+# How long COMPLETED/ERROR stay visible before handle_command() returns and
+# run_assistant()'s own post-command reset takes status back to idle -- see
+# ASSISTANT_STATUS_MODEL.md. Without this, both states would be set and
+# immediately overwritten within the same call stack unwind, too fast to
+# ever be visually perceptible.
+TERMINAL_STATE_DISPLAY_SECONDS = 0.6
+
 
 def _wake_word_key() -> str:
     if WAKE_WORD_MODEL.endswith((".onnx", ".tflite")):
@@ -145,7 +153,7 @@ def _health_check_loop(state):
 
 
 def handle_command(text: str, context: ConversationContext, state):
-    state.set_status("thinking")
+    state.set_status(AssistantStatus.THINKING)
     intent = extract_intent(text, context)
     print(f"[intent] {intent}")
     action = intent.get("action", "play")
@@ -157,6 +165,7 @@ def handle_command(text: str, context: ConversationContext, state):
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
+            state.set_status(AssistantStatus.EXECUTING)
             play_song(intent)
         elif action == "queue":
             songs = intent.get("songs", [])
@@ -165,6 +174,7 @@ def handle_command(text: str, context: ConversationContext, state):
                 speak(activity_text, state)
                 state.set_current_activity(activity_text)
                 state.add_history_entry(activity_text, action_type=action)
+                state.set_status(AssistantStatus.EXECUTING)
                 start_queue(songs)
             else:
                 activity_text = "Couldn't come up with a playlist for that"
@@ -172,36 +182,42 @@ def handle_command(text: str, context: ConversationContext, state):
                 state.set_current_activity(activity_text)
                 state.add_history_entry(activity_text, action_type=action)
         elif action == "pause":
+            state.set_status(AssistantStatus.EXECUTING)
             pause_music()
             activity_text = "Paused"
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
         elif action == "resume":
+            state.set_status(AssistantStatus.EXECUTING)
             resume_music()
             activity_text = "Resumed"
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
         elif action == "skip":
+            state.set_status(AssistantStatus.EXECUTING)
             skip_music()
             activity_text = "Skipped"
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
         elif action == "correct":
+            state.set_status(AssistantStatus.EXECUTING)
             switched = correct_song()
             activity_text = "How about this one" if switched else "That was the last option I found"
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
         elif action == "volume_up":
+            state.set_status(AssistantStatus.EXECUTING)
             adjust_volume("up")
             activity_text = "Turned it up"
             speak(activity_text, state)
             state.set_current_activity(activity_text)
             state.add_history_entry(activity_text, action_type=action)
         elif action == "volume_down":
+            state.set_status(AssistantStatus.EXECUTING)
             adjust_volume("down")
             activity_text = "Turned it down"
             speak(activity_text, state)
@@ -225,8 +241,12 @@ def handle_command(text: str, context: ConversationContext, state):
         speak(activity_text, state)
         state.set_current_activity(activity_text)
         state.add_history_entry(activity_text, action_type="error")
+        state.set_status(AssistantStatus.ERROR)
+        time.sleep(TERMINAL_STATE_DISPLAY_SECONDS)
         return False
 
+    state.set_status(AssistantStatus.COMPLETED)
+    time.sleep(TERMINAL_STATE_DISPLAY_SECONDS)
     context.add_turn(text, intent)
     return True
 
@@ -257,7 +277,7 @@ def run_assistant(state):
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=CHUNK_SIZE)
     stream.start()
     state.set_mic_active(True)
-    state.set_status("idle")
+    state.set_status(AssistantStatus.IDLE)
 
     try:
         while True:
@@ -274,9 +294,9 @@ def run_assistant(state):
             if score > settings.get("wake_word_sensitivity"):
                 print(f"\n[wake] detected! (score={score:.2f})")
                 stream.stop()
-                state.set_status("listening")
+                state.set_status(AssistantStatus.LISTENING)
                 speak("Yes?", state)
-                state.set_status("listening")  # speak() reverts to idle when done; re-assert
+                state.set_status(AssistantStatus.LISTENING)  # speak() reverts to idle when done; re-assert
 
                 audio, spoke = record_until_silence(
                     sample_rate=SAMPLE_RATE,
@@ -285,7 +305,7 @@ def run_assistant(state):
                     on_level=state.set_level,
                 )
 
-                state.set_status("thinking")
+                state.set_status(AssistantStatus.THINKING)
                 text = transcribe_audio(audio, SAMPLE_RATE)
                 print(f"[transcript] {text}")
 
@@ -295,7 +315,7 @@ def run_assistant(state):
                 else:
                     print("[skip] heard nothing usable, going back to sleep")
 
-                state.set_status("idle")
+                state.set_status(AssistantStatus.IDLE)
                 state.set_level(0.0)
                 oww_model.reset()
                 stream.start()
