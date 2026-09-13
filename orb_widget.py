@@ -30,12 +30,31 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+SIDEBAR_WIDTH = 150
+
 EMPTY_HISTORY_TEXT = "Nothing yet — say \"hey jairus\" to get started"
+
+
+def _render_history_items(list_widget, history):
+    """Shared by ActivityPanel's inline list and HistoryPage's focused
+    list -- both render the exact same AssistantState history data, just
+    at different sizes, so the rendering rule lives in one place.
+    """
+    list_widget.clear()
+    if not history:
+        list_widget.addItem(EMPTY_HISTORY_TEXT)
+        return
+    for entry in history:
+        list_widget.addItem(f"[{entry['timestamp']}] {entry['text']}")
+    list_widget.scrollToBottom()
+
 
 WINDOW_SIZE = 480
 FPS = 60
@@ -149,7 +168,7 @@ class ActivityPanel(QWidget):
             "border: 1px solid #262638; font-size: 12px; }"
         )
         layout.addWidget(self.history_list)
-        self._render_history([])
+        _render_history_items(self.history_list, [])
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -161,17 +180,98 @@ class ActivityPanel(QWidget):
             self.activity_label.setText(activity)
             self._last_activity = activity
         if history != self._last_history:
-            self._render_history(history)
+            _render_history_items(self.history_list, history)
             self._last_history = history
 
-    def _render_history(self, history):
-        self.history_list.clear()
-        if not history:
-            self.history_list.addItem(EMPTY_HISTORY_TEXT)
-            return
-        for entry in history:
-            self.history_list.addItem(f"[{entry['timestamp']}] {entry['text']}")
-        self.history_list.scrollToBottom()
+
+class HomePage(QWidget):
+    """The orb + current activity + recent commands -- exactly what the
+    window showed before the sidebar existed, just living in a page now
+    instead of being the window's only content.
+    """
+
+    def __init__(self, state, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.addWidget(OrbWidget(state, self))
+        layout.addWidget(ActivityPanel(state, self))
+
+
+class HistoryPage(QWidget):
+    """A focused, full-size view of the same bounded history AssistantState
+    already tracks (Phase 2's deque) -- not a different or richer dataset,
+    just more room than ActivityPanel's inline list gives it.
+    """
+
+    POLL_INTERVAL_MS = 250
+
+    def __init__(self, state, parent=None):
+        super().__init__(parent)
+        self._state = state
+        self._last_history = None
+
+        layout = QVBoxLayout(self)
+
+        heading = QLabel("Recent commands")
+        heading.setStyleSheet("color: #8a8fa3; font-size: 13px;")
+        layout.addWidget(heading)
+
+        self.history_list = QListWidget()
+        self.history_list.setStyleSheet(
+            "QListWidget { background-color: #14141f; color: #c8cbdc; "
+            "border: 1px solid #262638; font-size: 13px; }"
+        )
+        layout.addWidget(self.history_list)
+        _render_history_items(self.history_list, [])
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(self.POLL_INTERVAL_MS)
+
+    def _refresh(self):
+        _, history = self._state.get_activity_snapshot()
+        if history != self._last_history:
+            _render_history_items(self.history_list, history)
+            self._last_history = history
+
+
+NAV_ITEMS = [
+    # (label, enabled, tooltip-when-disabled)
+    ("Home", True, None),
+    ("History", True, None),
+    ("Tools", False, "Coming soon — no tools registered for voice control yet"),
+    ("Settings", False, "Coming soon — no configurable settings yet"),
+]
+
+
+class Sidebar(QListWidget):
+    """Persistent left nav. Home/History are real, clickable destinations.
+    Tools/Settings are shown for correct visual shape but disabled --
+    no real content exists behind them yet, so per UI_UX_CONTEXT.md's
+    "truth over illusion" they're not clickable rather than leading to a
+    fake page. Qt skips disabled items for both mouse and keyboard
+    selection, so clicking/arrowing onto them is a no-op, not an error.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(SIDEBAR_WIDTH)
+        self.setStyleSheet(
+            "QListWidget { background-color: #101018; color: #c8cbdc; "
+            "border: none; border-right: 1px solid #262638; font-size: 13px; "
+            "outline: 0; }"
+            "QListWidget::item { padding: 10px 14px; }"
+            "QListWidget::item:selected { background-color: #1c1c2c; color: #ffffff; }"
+            "QListWidget::item:disabled { color: #4a4d5e; }"
+        )
+        for label, enabled, tooltip in NAV_ITEMS:
+            item = QListWidgetItem(label)
+            if not enabled:
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+                if tooltip:
+                    item.setToolTip(tooltip)
+            self.addItem(item)
+        self.setCurrentRow(0)
 
 
 HEALTH_DISPLAY = {
@@ -216,13 +316,22 @@ class OrbWindow(QMainWindow):
     def __init__(self, state):
         super().__init__()
         self.setWindowTitle("Jairus")
-        self.setMinimumSize(WINDOW_SIZE + 280, WINDOW_SIZE)
+        self.setMinimumSize(WINDOW_SIZE + 280 + SIDEBAR_WIDTH, WINDOW_SIZE)
 
         central = QWidget(self)
         central.setStyleSheet("background-color: #0c0c14;")
         layout = QHBoxLayout(central)
-        layout.addWidget(OrbWidget(state, central))
-        layout.addWidget(ActivityPanel(state, central))
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        sidebar = Sidebar(central)
+        self.stack = QStackedWidget(central)
+        self.stack.addWidget(HomePage(state, self.stack))     # row 0
+        self.stack.addWidget(HistoryPage(state, self.stack))  # row 1
+        sidebar.currentRowChanged.connect(self._on_nav_changed)
+
+        layout.addWidget(sidebar)
+        layout.addWidget(self.stack)
         self.setCentralWidget(central)
 
         status_bar = self.statusBar()
@@ -231,6 +340,12 @@ class OrbWindow(QMainWindow):
             "border-top: 1px solid #262638; }"
         )
         status_bar.addPermanentWidget(HealthIndicator(state, self))
+
+    def _on_nav_changed(self, row):
+        # Only Home (0) and History (1) are real stack pages; Tools/Settings
+        # rows are disabled in the sidebar so this never fires for them.
+        if 0 <= row < self.stack.count():
+            self.stack.setCurrentIndex(row)
 
 
 def run_orb(state):
