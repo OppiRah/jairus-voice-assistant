@@ -1,5 +1,29 @@
 # Orb Renderer Investigation
 
+## PoC VALIDATED — 2026-09-13
+
+The standalone proof of concept in `orb_renderer_poc/` (section 5 below)
+has been run on the real target machine and confirmed by direct
+observation of the running window. All 6 success criteria are met:
+
+1. The window renders transparently over the real desktop — no black
+   box, no window chrome.
+2. Animation runs smoothly in real time.
+3. Glow/bloom is a genuine, visible post-processing effect, not a flat
+   brighter fill.
+4. The window is genuinely borderless and stays always-on-top during
+   normal use.
+5. Visible state changes (color/pulse/particles) happen promptly in
+   response to messages from `test_driver.py`.
+6. The Godot subprocess launches and terminates cleanly via
+   `subprocess.Popen()`/`.terminate()`, with no orphaned process left
+   behind (mechanically verified earlier; see the PoC's own report).
+
+This confirms the section 4 recommendation (Godot 4.x as a separate
+transparent overlay process, driven over a local WebSocket) is
+technically sound on this machine. Section 6 (migration strategy) is the
+deliberate next step, not yet started as of this update.
+
 Technical investigation into building the most visually impressive,
 GPU-accelerated, real-time version of the Jairus orb that is realistically
 achievable for a personal-use project, without disrupting the existing
@@ -15,7 +39,7 @@ architecture could actually deliver that *class* of visual result in real
 time, on a personal Windows machine, while keeping Jairus's runtime
 authoritative and the renderer a swappable presentation layer.
 
----
+--
 
 ## 1. Current UI architecture
 
