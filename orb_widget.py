@@ -20,6 +20,7 @@ behavior, same as before).
 
 import math
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -210,16 +211,48 @@ class ActivityPanel(QWidget):
             self._last_history = history
 
 
+class GodotModeNotice(QWidget):
+    """Stands in for OrbWidget when the Godot renderer (a separate,
+    floating, standalone window -- see ORB_RENDERER_INVESTIGATION.md
+    section 6) owns the orb instead. Occupies the same fixed footprint
+    OrbWidget would, so HomePage's layout doesn't need to change shape
+    between modes -- just this one widget swaps out.
+
+    A brief explanatory note, not blank space: per UI_UX_CONTEXT.md's
+    "truth over illusion," silently leaving this area empty (or quietly
+    letting ActivityPanel expand to fill it) would look like something
+    broke rather than like a deliberate mode. Saying plainly why nothing
+    is here is the honest choice.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(WINDOW_SIZE, WINDOW_SIZE)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        label = QLabel("The orb is running in a separate\nwindow (Godot renderer).")
+        label.setAlignment(Qt.AlignCenter)
+        label.setWordWrap(True)
+        label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
+        layout.addWidget(label)
+
+
 class HomePage(QWidget):
     """The orb + current activity + recent commands -- exactly what the
     window showed before the sidebar existed, just living in a page now
     instead of being the window's only content.
+
+    godot_mode=True means a separate Godot window (not this one) owns the
+    orb -- see GodotModeNotice above for what fills its place here.
     """
 
-    def __init__(self, state, parent=None):
+    def __init__(self, state, godot_mode=False, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.addWidget(OrbWidget(state, self))
+        if godot_mode:
+            layout.addWidget(GodotModeNotice(self))
+        else:
+            layout.addWidget(OrbWidget(state, self))
         layout.addWidget(ActivityPanel(state, self))
 
 
@@ -630,7 +663,7 @@ class HealthIndicator(QLabel):
 
 
 class OrbWindow(QMainWindow):
-    def __init__(self, state):
+    def __init__(self, state, godot_mode=False):
         super().__init__()
         self.setWindowTitle("Jairus")
         self.setMinimumSize(WINDOW_SIZE + 280 + SIDEBAR_WIDTH, WINDOW_SIZE)
@@ -643,7 +676,7 @@ class OrbWindow(QMainWindow):
 
         sidebar = Sidebar(central)
         self.stack = QStackedWidget(central)
-        self.stack.addWidget(HomePage(state, self.stack))  # row 0
+        self.stack.addWidget(HomePage(state, godot_mode=godot_mode, parent=self.stack))  # row 0
         self.stack.addWidget(HistoryPage(state, self.stack))  # row 1
         self.stack.addWidget(ToolsPage(self.stack))  # row 2
         self.stack.addWidget(SettingsPage(self.stack))  # row 3
@@ -664,7 +697,15 @@ class OrbWindow(QMainWindow):
             self.stack.setCurrentIndex(row)
 
 
-def run_orb(state):
+def run_orb(state, godot_process=None):
+    """godot_process: the Popen handle for a successfully-launched Godot
+    renderer subprocess (main.py's _try_launch_godot()), or None if the
+    built-in Qt orb owns the orb instead. Either way, this window still
+    hosts the sidebar/History/Tools/Settings/health indicator -- Godot
+    mode only replaces the orb's own visual content (see GodotModeNotice)
+    with a separate, standalone, floating window; it does not replace
+    this QMainWindow.
+    """
     app = QApplication.instance() or QApplication(sys.argv)
 
     # Phase 7 (UI polish): one theme applied once at the QApplication level,
@@ -675,7 +716,21 @@ def run_orb(state):
     app.setFont(QFont(font_family, theme.BASE_FONT_SIZE))
     app.setStyleSheet(theme.build_stylesheet(font_family))
 
-    window = OrbWindow(state)
+    window = OrbWindow(state, godot_mode=(godot_process is not None))
     window.show()
     app.exec()
+
+    if godot_process is not None and godot_process.poll() is None:
+        # Guaranteed clean termination, same standard the PoC itself
+        # already proved (subprocess.Popen + .terminate(), verified via
+        # psutil): try a graceful terminate first, escalate to kill() if
+        # it doesn't actually exit in time, so closing this window can
+        # never leave an orphaned Godot process behind.
+        godot_process.terminate()
+        try:
+            godot_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            godot_process.kill()
+            godot_process.wait(timeout=5)
+
     os._exit(0)  # background assistant thread is a daemon, so this cleanly ends everything

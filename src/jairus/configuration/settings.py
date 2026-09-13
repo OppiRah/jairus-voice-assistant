@@ -51,6 +51,15 @@ _DEFAULTS: dict[str, Any] = {
     "whisper_model_size": "small",  # transcribe.py's old MODEL_SIZE
     "music_library_dir": None,      # local_library.py's old MUSIC_LIBRARY_DIR
     "music_match_threshold": 0.55,  # local_library.py's old MATCH_THRESHOLD
+    # Renderer bridge / Godot integration (ORB_RENDERER_INVESTIGATION.md
+    # section 6). "qt_orb" is the default: it requires no configuration
+    # and behaves exactly as this project always has, which is the right
+    # default for someone who has never run it before. "godot" requires
+    # godot_executable_path to be set to a real Godot executable on this
+    # machine -- there's no sensible cross-machine default for that, so it
+    # stays unset (None) until a user deliberately configures it.
+    "renderer_mode": "qt_orb",       # "qt_orb" | "godot"
+    "godot_executable_path": None,   # e.g. "C:\\Tools\\Godot\\Godot_v4.7.2-stable_win64.exe"
 }
 
 # JAIRUS_ARCHITECTURE.md Part 13.2 -- every message envelope carries this so
