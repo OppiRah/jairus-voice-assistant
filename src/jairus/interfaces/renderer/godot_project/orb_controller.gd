@@ -19,6 +19,13 @@ extends Node3D
 ## STATE_PROFILES fields (ring_speed/ring_opacity/arc_intensity/
 ## arc_frequency), same table, same discipline as the pulse/particle/glow
 ## fields already there.
+##
+## Activity text overlay: a screen-space Label (orb_scene.tscn's UI
+## CanvasLayer) shows the bridge's real "activity" string verbatim -- no
+## new checklist/confirm-cancel UI, that remains out of scope until real
+## backend data for it exists. Text fades out/swaps/fades in via a Tween
+## rather than cutting instantly, and is tinted from the same _current_color
+## driving the rest of the orb (brightened toward white for legibility).
 
 const WS_URL := "ws://localhost:8767"
 
@@ -62,6 +69,16 @@ const ARC_THICKNESS := 0.015      # ribbon half-width
 const ARC_ROTATION_SPEED := 0.35  # rad/s, both arcs rotate at this fixed rate regardless of state (only visibility/brightness vary per state)
 const ARC_FLICKER_THRESHOLD := 0.3  # sin(...) must exceed this to be visible -- higher = rarer/shorter flashes at a given frequency
 const ARC_EMISSION_ENERGY := 4.0  # baseline HDR multiplier for arc material, independent of the core's EMISSION_ENERGY
+
+# Activity text overlay: shows the real "activity" string the bridge sends
+# (assistant_state.py's _current_activity, defaulting to "Idle" -- matched
+# here so both renderers agree on the idle default). No new palette: the
+# label is tinted by the same lerped _current_color driving the rest of the
+# orb, just blended toward white so it stays legible against a dark or
+# transparent desktop background (a raw state color like OFFLINE's
+# near-gray would otherwise be too dim to read).
+const ACTIVITY_TEXT_BRIGHTEN := 0.45  # lerp weight toward Color.WHITE
+const ACTIVITY_FADE_SECONDS := 0.25   # each half of the fade-out/swap/fade-in transition
 
 # One row per real AssistantStatus value -- every value that makes a
 # state FEEL different, not just a different color, lives here as a
@@ -163,6 +180,7 @@ const STATE_PROFILES := {
 @onready var ring_b: MeshInstance3D = $RingB
 @onready var arc_a: MeshInstance3D = $ArcA
 @onready var arc_b: MeshInstance3D = $ArcB
+@onready var activity_label: Label = $UI/ActivityLabel
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -178,6 +196,8 @@ var _ring_material_a: StandardMaterial3D
 var _ring_material_b: StandardMaterial3D
 var _arc_material_a: StandardMaterial3D
 var _arc_material_b: StandardMaterial3D
+var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
+var _activity_tween: Tween
 
 
 func _ready() -> void:
@@ -309,6 +329,8 @@ func _process(delta: float) -> void:
 	_update_rings(delta, profile)
 	_update_arcs(delta, profile)
 
+	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
+
 
 func _update_rings(delta: float, profile: Dictionary) -> void:
 	var ring_speed: float = profile["ring_speed"]
@@ -414,7 +436,26 @@ func _handle_message(raw_text: String) -> void:
 	_target_color = STATE_PROFILES[new_state]["color"]
 	_level = clamp(float(data.get("level", 0.0)), 0.0, 1.0)
 
+	var new_activity: String = data.get("activity", "Idle")
+	if new_activity != _current_activity:
+		print("[orb_controller] activity changed: '%s' -> '%s'" % [_current_activity, new_activity])
+		_current_activity = new_activity
+		_set_activity_text(new_activity)
+
 
 func _apply_color(color: Color) -> void:
 	_material.albedo_color = color
 	_material.emission = color
+
+
+## Swaps the activity label's text with a brief fade-out/swap/fade-in
+## instead of an instant hard cut, using the engine's own Tween (no new
+## animation system). Kills any tween still running from a rapid prior
+## change so overlapping fades never fight over the label's alpha.
+func _set_activity_text(new_text: String) -> void:
+	if _activity_tween:
+		_activity_tween.kill()
+	_activity_tween = create_tween()
+	_activity_tween.tween_property(activity_label, "modulate:a", 0.0, ACTIVITY_FADE_SECONDS)
+	_activity_tween.tween_callback(activity_label.set_text.bind(new_text))
+	_activity_tween.tween_property(activity_label, "modulate:a", 1.0, ACTIVITY_FADE_SECONDS)
