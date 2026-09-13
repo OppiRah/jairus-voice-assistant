@@ -14,11 +14,12 @@ extends Node3D
 ## geometry pass adds new scene content on top, without reworking any of
 ## that: two semi-transparent TorusMesh rings orbiting the core at
 ## different tilts/speeds, and two thin emissive "energy arc" ribbons
-## built procedurally (SurfaceTool, no external assets/shaders) that
-## flicker on and off at a per-state frequency. Both are driven by new
-## STATE_PROFILES fields (ring_speed/ring_opacity/arc_intensity/
-## arc_frequency), same table, same discipline as the pulse/particle/glow
-## fields already there.
+## built procedurally (SurfaceTool, no external assets/shaders). Both are
+## driven by new STATE_PROFILES fields (ring_speed/ring_opacity/
+## arc_intensity/arc_frequency), same table, same discipline as the
+## pulse/particle/glow fields already there. (The arcs' original binary
+## on/off flicker was later replaced -- see the Pass B "ribbons take 2"
+## note below.)
 ##
 ## Activity text overlay: a screen-space Label (orb_scene.tscn's UI
 ## CanvasLayer) shows the bridge's real "activity" string verbatim -- no
@@ -48,6 +49,25 @@ extends Node3D
 ## CORE_GLOW_EMISSION_ENERGY/CORE_EMBLEM_EMISSION_ENERGY constants (times
 ## each state's new core_intensity) are set so the core outbrights the
 ## arcs in every one of the 9 states, not just at baseline.
+##
+## Pass B (structure) -- segmented rings + dark plates, see the
+## RING_A_SEGMENTS/PLATE_CONFIGS comments further down. Left completely
+## alone by every pass after it, including this one.
+##
+## Pass B (energy ribbons, take 2) -- the arcs' original binary
+## sin()>threshold on/off flicker read as choppy, not "fluid/organic"
+## (design doc section 6's explicit contrast against the rigid, precise
+## rings/segments/plates). Replaced with: (1) ARC_POINT_COUNT raised from
+## 7 to 31 so the same deterministic path reads as a smooth curve, and
+## (2) orb_arc_ribbon.gdshader, a small new shader (same established
+## pattern as CoreHousing/the glass shells, not a new technique) that
+## reads each vertex's UV.x -- tagging its position along the ribbon,
+## added in _build_arc_mesh() -- to drive a brightness wave that
+## genuinely travels along the ribbon's length over time and never
+## reaches true zero, replacing the hard on/off cut entirely. Particle
+## trails (mentioned as optional in both the design doc and the gap
+## analysis) were investigated and deliberately not built this pass --
+## see this pass's own report for why.
 
 const WS_URL := "ws://localhost:8767"
 
@@ -201,18 +221,35 @@ const PLATE_CONFIGS := [
 
 # Energy arcs: built once as static ribbon meshes at _ready() (regenerating
 # geometry every frame is real, avoidable CSG/mesh-rebuild cost this pass
-# doesn't need) -- their "crackling" comes from rotating slowly plus
-# flickering visibility on/off at a per-state frequency, not from
-# reshaping. See _build_arc_mesh()'s own comment for why a hand-built
-# SurfaceTool ribbon was chosen over a custom shader or CSG.
-const ARC_POINT_COUNT := 7        # vertices along one arc's path
+# doesn't need) -- their "crackling" comes from rotating slowly plus a
+# continuous brightness wave traveling along their length (Pass B: energy
+# ribbons take 2 -- see ARC_SHADER and orb_arc_ribbon.gdshader below),
+# not from reshaping. See _build_arc_mesh()'s own comment for why a
+# hand-built SurfaceTool ribbon was chosen over CSG.
+const ARC_POINT_COUNT := 31        # Pass B: raised from 7 -- same underlying sin()-based path formula in _build_arc_mesh(), just sampled far more densely, so the identical deterministic curve reads as a smooth flowing line instead of a jagged low-poly one.
 const ARC_RADIUS := 0.75          # distance from the core center the arc path sits at
 const ARC_SPAN_RADIANS := PI * 0.6  # how much of a circle one arc sweeps
 const ARC_JAGGEDNESS := 0.08      # max perpendicular offset applied to interior points, for a "lightning" feel
 const ARC_THICKNESS := 0.015      # ribbon half-width
-const ARC_ROTATION_SPEED := 0.35  # rad/s, both arcs rotate at this fixed rate regardless of state (only visibility/brightness vary per state)
-const ARC_FLICKER_THRESHOLD := 0.3  # sin(...) must exceed this to be visible -- higher = rarer/shorter flashes at a given frequency
+const ARC_ROTATION_SPEED := 0.35  # rad/s, both arcs rotate at this fixed rate regardless of state (only brightness varies per state now)
 const ARC_EMISSION_ENERGY := 2.2  # Pass A: lowered from 4.0 -- at the old value the arcs out-bloomed the core in every state (a measured bug, see CORE_GLOW_EMISSION_ENERGY above); this baseline, times arc_intensity (max 1.8 at error), now stays under the core's floor in every state
+
+# Pass B (energy ribbons take 2) -- orb_arc_ribbon.gdshader replaces the
+# old binary sin()>threshold on/off flicker with a continuous brightness
+# wave that genuinely travels along the ribbon's length (using each
+# vertex's UV.x, set in _build_arc_mesh() above) rather than the whole
+# ribbon snapping uniformly on or off. This is a new small shader, but
+# not a new TECHNIQUE for this project -- CoreHousing and the 4 glass
+# shells already use hand-written .gdshader materials for exactly this
+# kind of continuous, state-driven visual behavior; this is the same
+# established pattern applied to the arcs. ARC_RIPPLE_CYCLES is
+# structural (how many visible brightness waves fit along one ribbon at
+# once) and stays fixed; flow speed and turbulence (how deep the ripple
+# dips) come from STATE_PROFILES below, pushed as shader parameters every
+# frame in _update_arcs(), same as every other shader material here.
+const ARC_SHADER := preload("res://orb_arc_ribbon.gdshader")
+const ARC_RIPPLE_CYCLES := 2.0
+const ARC_ALPHA := 0.6
 
 # Activity text overlay: shows the real "activity" string the bridge sends
 # (assistant_state.py's _current_activity, defaulting to "Idle" -- matched
@@ -361,6 +398,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.0,
 		"segment_spread": 0.35,
 		"plate_activity": 0.3,
+		"arc_turbulence": 0.25,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -373,6 +411,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.05,
 		"segment_spread": 0.45,
 		"plate_activity": 0.4,
+		"arc_turbulence": 0.3,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -385,6 +424,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.15,
 		"segment_spread": 1.0,
 		"plate_activity": 0.8,
+		"arc_turbulence": 0.6,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -397,6 +437,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.05,
 		"segment_spread": 0.5,
 		"plate_activity": 0.4,
+		"arc_turbulence": 0.35,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -409,6 +450,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.2,
 		"segment_spread": 0.7,
 		"plate_activity": 0.6,
+		"arc_turbulence": 0.45,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -421,6 +463,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.1,
 		"segment_spread": 0.5,
 		"plate_activity": 0.35,
+		"arc_turbulence": 0.3,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -433,6 +476,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.3,
 		"segment_spread": 1.2,
 		"plate_activity": 1.0,
+		"arc_turbulence": 0.85,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -445,6 +489,7 @@ const STATE_PROFILES := {
 		"core_intensity": 0.2,
 		"segment_spread": 0.05,
 		"plate_activity": 0.02,
+		"arc_turbulence": 0.1,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -457,6 +502,7 @@ const STATE_PROFILES := {
 		"core_intensity": 1.05,
 		"segment_spread": 0.5,
 		"plate_activity": 0.35,
+		"arc_turbulence": 0.35,
 	},
 }
 
@@ -485,8 +531,8 @@ var _environment: Environment
 var _pop_remaining := 0.0  # seconds left in COMPLETED's brightness-pop-then-settle transient
 var _ring_material_a: StandardMaterial3D
 var _ring_material_b: StandardMaterial3D
-var _arc_material_a: StandardMaterial3D
-var _arc_material_b: StandardMaterial3D
+var _arc_material_a: ShaderMaterial
+var _arc_material_b: ShaderMaterial
 var _particle_material: StandardMaterial3D
 var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
 var _activity_tween: Tween
@@ -550,13 +596,20 @@ func _ready() -> void:
 	ring_b.rotate_x(deg_to_rad(RING_TILT_DEG))
 	ring_b.rotate_z(deg_to_rad(RING_B_ROLL_DEG))
 
-	_arc_material_a = _make_translucent_material()
+	_arc_material_a = ShaderMaterial.new()
+	_arc_material_a.shader = ARC_SHADER
 	_arc_material_a.render_priority = RENDER_PRIORITY_ARCS
+	_arc_material_a.set_shader_parameter("ripple_cycles", ARC_RIPPLE_CYCLES)
+	_arc_material_a.set_shader_parameter("alpha", ARC_ALPHA)
 	arc_a.mesh = _build_arc_mesh(0.0)
 	arc_a.set_surface_override_material(0, _arc_material_a)
 
-	_arc_material_b = _make_translucent_material()
+	_arc_material_b = ShaderMaterial.new()
+	_arc_material_b.shader = ARC_SHADER
 	_arc_material_b.render_priority = RENDER_PRIORITY_ARCS
+	_arc_material_b.set_shader_parameter("ripple_cycles", ARC_RIPPLE_CYCLES)
+	_arc_material_b.set_shader_parameter("alpha", ARC_ALPHA)
+	_arc_material_b.set_shader_parameter("time_offset", 3.3)  # phase offset so ArcA/ArcB never ripple in perfect unison, same spirit as the old flicker's phase-offset trick
 	arc_b.mesh = _build_arc_mesh(3.3)  # different seed_offset -> a differently-jagged path than ArcA
 	arc_b.set_surface_override_material(0, _arc_material_b)
 	arc_b.rotate_y(deg_to_rad(120.0))  # offset so the two arcs don't start overlapping
@@ -661,7 +714,16 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 			perp = direction.cross(Vector3.RIGHT)
 		perp = perp.normalized() * ARC_THICKNESS
 
+		# Pass B: UV.x tags each vertex with its position along the path
+		# (0.0 at one end, 1.0 at the other), read by
+		# orb_arc_ribbon.gdshader to drive a brightness wave that
+		# genuinely travels along the ribbon's length -- both vertices at
+		# this point share the same t, since they're a thickness pair, not
+		# a step along the path.
+		var t := float(i) / float(points.size() - 1)
+		st.set_uv(Vector2(t, 0.0))
 		st.add_vertex(points[i] - perp)
+		st.set_uv(Vector2(t, 1.0))
 		st.add_vertex(points[i] + perp)
 
 	# No generate_normals() call: SurfaceTool only supports it for
@@ -847,34 +909,26 @@ func _spin_ring_segments(segments: Array[MeshInstance3D], configs: Array, base_s
 		segments[i].rotate_z(extra * delta)
 
 
+## Pass B (energy ribbons take 2): arc_frequency is repurposed from "how
+## often does the whole ribbon flash on" to "how fast does the brightness
+## wave travel along the ribbon" -- both arcs stay visible at all times
+## now (no more .visible toggling); orb_arc_ribbon.gdshader's own
+## continuous wave, never reaching true zero brightness, is what replaces
+## the old binary on/off read. arc_turbulence is new this pass (how deep
+## the wave dips -- see the shader's own comment).
 func _update_arcs(delta: float, profile: Dictionary) -> void:
-	var frequency: float = profile["arc_frequency"]
+	var flow_speed: float = profile["arc_frequency"]
+	var turbulence: float = profile.get("arc_turbulence", 0.3)
 	var intensity: float = profile["arc_intensity"]
 
 	arc_a.rotate_y(ARC_ROTATION_SPEED * delta)
 	arc_b.rotate_y(-ARC_ROTATION_SPEED * 0.8 * delta)
 
-	# Deterministic on/off flicker: two different phase offsets so ArcA and
-	# ArcB don't flash in perfect unison even at the same frequency.
-	# frequency == 0.0 (OFFLINE) means the sine term is constant, always
-	# below the threshold -- arcs correctly never light up, not "broken".
-	var flicker_a := sin(_elapsed * TAU * frequency)
-	var flicker_b := sin(_elapsed * TAU * frequency + 2.1)
-
-	var visible_a := flicker_a > ARC_FLICKER_THRESHOLD
-	var visible_b := flicker_b > ARC_FLICKER_THRESHOLD
-
-	arc_a.visible = visible_a
-	arc_b.visible = visible_b
-
-	if visible_a:
-		_arc_material_a.albedo_color = _current_color
-		_arc_material_a.emission = _current_color
-		_arc_material_a.emission_energy_multiplier = ARC_EMISSION_ENERGY * intensity
-	if visible_b:
-		_arc_material_b.albedo_color = _current_color
-		_arc_material_b.emission = _current_color
-		_arc_material_b.emission_energy_multiplier = ARC_EMISSION_ENERGY * intensity
+	for mat in [_arc_material_a, _arc_material_b]:
+		mat.set_shader_parameter("base_color", _current_color)
+		mat.set_shader_parameter("emission_energy", ARC_EMISSION_ENERGY * intensity)
+		mat.set_shader_parameter("flow_speed", flow_speed)
+		mat.set_shader_parameter("turbulence", turbulence)
 
 
 ## STAGE 2 of the full Fresnel glass pass: same-scene lensing now enabled
