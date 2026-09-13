@@ -173,7 +173,28 @@ const PLATE_CONFIGS := [
 		"size": Vector3(0.4, 0.6, 0.03), "rotation_deg": Vector3(-15.0, 70.0, 10.0),
 	},
 	{
-		"angle_deg": 262.0, "radius": 0.92, "height": 0.14,
+		# Bug fix (post-Pass-B): originally angle_deg=262.0, radius=0.92 --
+		# at 262 degrees, sin(262 deg) ~= -0.99, so the position vector
+		# landed almost entirely along local Z, the SAME axis the camera
+		# looks down. That put Plate3 only ~2.8 degrees off the camera's
+		# view axis while sitting farther from the camera (world Z ~= -0.91)
+		# than the opaque Core sphere (radius 0.5 at the origin, angular
+		# radius ~9.5 degrees from the camera) -- so the Core fully eclipsed
+		# it, confirmed by a real diagnostic print of both angles before
+		# touching any numbers, not assumed. Enlarging the old radius alone
+		# would NOT have fixed this: at angle_deg=262 nearly the entire
+		# position vector is radial along the view axis, so a bigger radius
+		# mostly just pushes the plate further behind the Core, not further
+		# off-axis. angle_deg=200.0 keeps sin/cos more balanced (position
+		# offset lands mostly in X, which IS perpendicular to the view
+		# axis), putting the plate at ~19.7 degrees off-axis -- clear of the
+		# Core's ~9.5-degree occlusion cone with real margin. radius raised
+		# 0.92->1.3 alongside it (still a distinct third radius from Plate1's
+		# 1.12/Plate2's 1.58) for a clearer, less core-adjacent silhouette.
+		# height/size/rotation_deg untouched -- rotation was never the
+		# problem (face_to_camera_deg=42 degrees, a perfectly normal
+		# readable angle, not edge-on).
+		"angle_deg": 200.0, "radius": 1.3, "height": 0.14,
 		"size": Vector3(0.62, 0.48, 0.04), "rotation_deg": Vector3(35.0, -25.0, 120.0),
 	},
 ]
