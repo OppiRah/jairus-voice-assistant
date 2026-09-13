@@ -52,8 +52,21 @@ const EMISSION_ENERGY := 3.5  # baseline HDR multiplier so the core color actual
 # lockstep, reading as two independent orbits rather than one ring
 # duplicated.
 const RING_B_SPEED_FACTOR := -0.7  # negative: opposite direction, slightly slower
-const RING_A_INITIAL_TILT_DEG := 60.0  # tilt around X
-const RING_B_INITIAL_TILT_DEG := 75.0  # tilt around Y -- a different axis than RingA, for visual variety
+
+# Both rings tilt the same amount away from facing the camera (TorusMesh's
+# default face-normal is the local Z axis, which starts pointed straight at
+# Camera3D) -- confirmed via a real rendered screenshot that RING_TILT_DEG's
+# distance from 0 controls how edge-on a ring reads, regardless of which
+# axis it's tilted around: the original pass tilted RingA 60 degrees around
+# X (read as a clear ellipse) but RingB 75 degrees around Y (read as a
+# nearly edge-on flat bar, since 75 degrees is much closer to the 90-degree
+# edge-on limit). Both rings now share the same X tilt so both stay equally
+# readable, and RingB gets an additional Z-axis roll on top -- a roll spins
+# the already-tilted ellipse's orientation within the image plane without
+# changing how edge-on it is, so it's the safe way to make the two rings
+# still look like distinct crossing orbits.
+const RING_TILT_DEG := 55.0  # tilt around X, shared by both rings
+const RING_B_ROLL_DEG := 90.0  # RingB's extra Z-axis roll, applied after the shared tilt
 
 # Energy arcs: built once as static ribbon meshes at _ready() (regenerating
 # geometry every frame is real, avoidable CSG/mesh-rebuild cost this pass
@@ -196,6 +209,7 @@ var _ring_material_a: StandardMaterial3D
 var _ring_material_b: StandardMaterial3D
 var _arc_material_a: StandardMaterial3D
 var _arc_material_b: StandardMaterial3D
+var _particle_material: StandardMaterial3D
 var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
 var _activity_tween: Tween
 
@@ -203,17 +217,29 @@ var _activity_tween: Tween
 func _ready() -> void:
 	_material = StandardMaterial3D.new()
 	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_material.emission_enabled = true  # see _make_translucent_material()'s comment -- same fix, applied here too
 	core.set_surface_override_material(0, _material)
 	_environment = world_environment.environment
 	_apply_color(_current_color)
 
+	# AmbientParticles previously drew with no material at all (its
+	# SphereMesh_particle draw pass had no surface material assigned), so it
+	# fell back to Godot's default lit material -- dim gray dots relying on
+	# the scene's one weak OmniLight3D, not the bright glowing sparks the
+	# rest of the orb uses. material_override replaces that for every
+	# particle instance with the same emissive/unshaded material family as
+	# the core/rings/arcs, tinted from _current_color each frame in _process().
+	_particle_material = _make_translucent_material()
+	particles.material_override = _particle_material
+
 	_ring_material_a = _make_translucent_material()
 	ring_a.set_surface_override_material(0, _ring_material_a)
-	ring_a.rotate_x(deg_to_rad(RING_A_INITIAL_TILT_DEG))
+	ring_a.rotate_x(deg_to_rad(RING_TILT_DEG))
 
 	_ring_material_b = _make_translucent_material()
 	ring_b.set_surface_override_material(0, _ring_material_b)
-	ring_b.rotate_y(deg_to_rad(RING_B_INITIAL_TILT_DEG))
+	ring_b.rotate_x(deg_to_rad(RING_TILT_DEG))
+	ring_b.rotate_z(deg_to_rad(RING_B_ROLL_DEG))
 
 	_arc_material_a = _make_translucent_material()
 	arc_a.mesh = _build_arc_mesh(0.0)
@@ -238,6 +264,14 @@ func _make_translucent_material() -> StandardMaterial3D:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# emission_enabled defaults to false on StandardMaterial3D -- without it,
+	# setting .emission/.emission_energy_multiplier does nothing at all, and
+	# the WorldEnvironment's glow effect (which only blooms pixels above
+	# glow_hdr_threshold) never sees anything bright enough to bloom. This
+	# was the confirmed root cause of "no visible glow" (rendering-quality
+	# pass): every value in STATE_PROFILES was real, but no material had
+	# emission switched on to make use of them.
+	mat.emission_enabled = true
 	return mat
 
 
@@ -310,6 +344,9 @@ func _process(delta: float) -> void:
 	if particles:
 		particles.amount_ratio = clamp(particle_baseline + _level, 0.0, 1.0)
 		particles.speed_scale = profile["particle_speed"]
+	_particle_material.albedo_color = _current_color
+	_particle_material.emission = _current_color
+	_particle_material.emission_energy_multiplier = EMISSION_ENERGY
 
 	var glow_intensity: float = profile["glow_intensity"]
 	var glow_strength: float = profile["glow_strength"]

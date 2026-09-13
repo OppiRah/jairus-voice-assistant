@@ -10,7 +10,7 @@ config_version=5
 
 config/name="Jairus Orb Renderer PoC"
 run/main_scene="res://orb_scene.tscn"
-config/features=PackedStringArray("4.7", "GL Compatibility")
+config/features=PackedStringArray("4.7", "Forward Mobile")
 
 [display]
 
@@ -24,7 +24,20 @@ window/stretch/mode="disabled"
 
 [rendering]
 
-renderer/rendering_method="gl_compatibility"
+; Switched from gl_compatibility to mobile (Vulkan Forward Mobile) during
+; the rendering-quality pass: confirmed via a real rendered screenshot
+; that WorldEnvironment glow (STATE_PROFILES' glow_intensity/glow_strength)
+; never actually blooms under gl_compatibility in this Godot 4.7.2 build,
+; even with materials' emission properly enabled, while the identical
+; scene shows real glow under mobile. ORB_RENDERER_INVESTIGATION.md flags
+; a known Windows 11 + Vulkan transparent-window bug (window goes black
+; when focused) as a risk of leaving gl_compatibility -- tested directly on
+; this machine before switching: forced the real window into focus under
+; the mobile renderer and captured a real OS-level desktop screenshot;
+; desktop content visibly showed through the window and glow rendered
+; correctly, so that bug does not reproduce here (this project's window is
+; also small/fixed-size, matching the doc's own lower-risk caveat).
+renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="gl_compatibility"
 environment/defaults/default_clear_color=Color(0, 0, 0, 0)
 textures/vram_compression/import_etc2_astc=true
