@@ -21,6 +21,7 @@ coherent scale.
 """
 
 from PySide6.QtGui import QFont, QFontDatabase
+import qtawesome as qta
 
 # ---- Neutral / structural colors --------------------------------------
 # A subtle three-step elevation scale that had already emerged across
@@ -62,6 +63,81 @@ SPACE_SM = 8
 SPACE_MD = 12
 SPACE_LG = 16
 SPACE_XL = 24
+
+CARD_RADIUS = 6  # rounded-corner radius for history/recent-commands and Tools cards (Phase 8)
+
+# ---- Icons (Phase 8) -------------------------------------------------------
+# Chosen over Qt's own QStyle.standardIcon() after actually testing it on
+# this machine: several needed icons (SP_MediaPlay, SP_MediaPause,
+# SP_MediaSkipForward, SP_MediaVolume) rendered as BLANK on this platform's
+# style, and the ones that did render (folders, a monitor, message-box
+# glyphs) came out as colorful, Windows-native bitmaps that can't be
+# recolored to match this theme -- reintroducing exactly the visual
+# inconsistency Phase 7 worked to eliminate. qtawesome is a small (~2.6MB),
+# MIT-licensed, actively-maintained wrapper around the Font Awesome icon
+# font: every icon needed here (home/history/tools/cog, music/apps/globe/
+# window/gamepad/folder/code, play/pause/forward/volume/sync/question/
+# warning) exists in its solid set, renders identically across platforms,
+# and can be recolored with theme.TEXT_SECONDARY like any other themed
+# element -- verified by rendering the full set before choosing it. No new
+# icon asset files are bundled in the repo; qtawesome ships its own font
+# resources internally.
+ICON_COLOR = TEXT_SECONDARY
+
+NAV_ICONS = {
+    "Home": "fa5s.home",
+    "History": "fa5s.history",
+    "Tools": "fa5s.tools",
+    "Settings": "fa5s.cog",
+}
+
+CATEGORY_ICONS = {
+    "media": "fa5s.music",
+    "apps": "fa5s.th-large",
+    "browser": "fa5s.globe",
+    "windows": "fa5s.window-restore",
+    "game": "fa5s.gamepad",
+    "filesystem": "fa5s.folder",
+    "developer": "fa5s.code",
+}
+
+# Maps assistant_loop.py's REAL action type (the same value that already
+# drives handle_command()'s if/elif dispatch, captured alongside each
+# history entry -- see AssistantState.add_history_entry()) to an icon.
+# "unknown" (the parser couldn't determine a real action) and "error" (the
+# action raised) are real, honest outcomes captured at their own call
+# sites, not guesses.
+ACTION_TYPE_ICONS = {
+    "play": "fa5s.play",
+    "queue": "fa5s.list",
+    "pause": "fa5s.pause",
+    "resume": "fa5s.play",
+    "skip": "fa5s.forward",
+    "correct": "fa5s.sync",
+    "volume_up": "fa5s.volume-up",
+    "volume_down": "fa5s.volume-down",
+    "whats_playing": "fa5s.info-circle",
+    "unknown": "fa5s.question",
+    "error": "fa5s.exclamation-triangle",
+}
+FALLBACK_ICON = "fa5s.question"  # any action type with no specific icon above
+
+
+def icon(name: str, color: str = ICON_COLOR):
+    """Returns a themed QIcon for a qtawesome glyph name."""
+    return qta.icon(name, color=color)
+
+
+def nav_icon(label: str):
+    return icon(NAV_ICONS.get(label, FALLBACK_ICON))
+
+
+def category_icon(category: str):
+    return icon(CATEGORY_ICONS.get(category, FALLBACK_ICON))
+
+
+def action_icon(action_type: str):
+    return icon(ACTION_TYPE_ICONS.get(action_type, FALLBACK_ICON))
 
 # ---- Typography -----------------------------------------------------------
 # UI_UX_CONTEXT.md calls for "Inter or similar clean sans-serif." Inter is
@@ -114,9 +190,17 @@ def build_stylesheet(font_family: str) -> str:
             background-color: transparent;
         }}
         QListWidget {{
-            background-color: {FIELD};
+            background-color: {BG};
             color: {TEXT_SECONDARY};
             border: 1px solid {BORDER};
+            outline: 0;
+        }}
+        QListWidget::item {{
+            background-color: {FIELD};
+            border: 1px solid {BORDER};
+            border-radius: {CARD_RADIUS}px;
+            padding: {SPACE_SM}px {SPACE_SM + 2}px;
+            margin: 3px 4px;
         }}
         QListWidget#Sidebar {{
             background-color: {SURFACE};
@@ -125,6 +209,10 @@ def build_stylesheet(font_family: str) -> str:
             outline: 0;
         }}
         QListWidget#Sidebar::item {{
+            background-color: transparent;
+            border: none;
+            border-radius: 0px;
+            margin: 0px;
             padding: {SPACE_SM + 2}px {SPACE_MD + 2}px;
         }}
         QListWidget#Sidebar::item:selected {{

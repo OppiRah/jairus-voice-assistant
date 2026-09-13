@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,14 +74,19 @@ EMPTY_HISTORY_TEXT = "Nothing yet — say \"hey jairus\" to get started"
 def _render_history_items(list_widget, history):
     """Shared by ActivityPanel's inline list and HistoryPage's focused
     list -- both render the exact same AssistantState history data, just
-    at different sizes, so the rendering rule lives in one place.
+    at different sizes, so the rendering rule lives in one place. Each
+    entry's icon comes from its real action_type (assistant_loop.py's
+    actual dispatch value, captured at each handle_command() call site --
+    see AssistantState.add_history_entry()), never guessed from the text.
     """
     list_widget.clear()
     if not history:
         list_widget.addItem(EMPTY_HISTORY_TEXT)
         return
     for entry in history:
-        list_widget.addItem(f"[{entry['timestamp']}] {entry['text']}")
+        item = QListWidgetItem(f"[{entry['timestamp']}] {entry['text']}")
+        item.setIcon(theme.action_icon(entry.get("action_type", "unknown")))
+        list_widget.addItem(item)
     list_widget.scrollToBottom()
 
 
@@ -186,6 +191,7 @@ class ActivityPanel(QWidget):
 
         self.history_list = QListWidget()
         self.history_list.setStyleSheet("QListWidget { font-size: 12px; }")  # smaller than the app default; colors/border come from the global theme stylesheet
+        self.history_list.setIconSize(QSize(14, 14))
         layout.addWidget(self.history_list)
         _render_history_items(self.history_list, [])
 
@@ -238,6 +244,7 @@ class HistoryPage(QWidget):
         # Colors/border/font-size all come from the global theme stylesheet
         # (matches the app's base font size, unlike ActivityPanel's smaller inline list).
         self.history_list = QListWidget()
+        self.history_list.setIconSize(QSize(16, 16))
         layout.addWidget(self.history_list)
         _render_history_items(self.history_list, [])
 
@@ -302,16 +309,25 @@ def _register_all_tools_for_display():
 
 
 class ToolRow(QWidget):
-    """One registered tool: name, permission badge, an explicit
-    "Requires confirmation" tag when true, and its full description --
-    all always visible. Deliberately has no click handler: the complete
-    description is already shown inline, so there's nothing left for a
-    click to reveal, and no interaction surface that could later be
-    mistaken for -- or repurposed into -- a way to run the tool.
+    """One registered tool, styled as its own card: name, permission
+    badge, an explicit "Requires confirmation" tag when true, and its
+    full description -- all always visible. Deliberately has no click
+    handler: the complete description is already shown inline, so
+    there's nothing left for a click to reveal, and no interaction
+    surface that could later be mistaken for -- or repurposed into -- a
+    way to run the tool.
     """
 
     def __init__(self, tool, parent=None):
         super().__init__(parent)
+        # QSS background/border only paint on a plain QWidget with this
+        # attribute set (Qt doesn't style-paint custom QWidget backgrounds
+        # by default).
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(
+            f"ToolRow {{ background-color: {theme.FIELD}; border: 1px solid {theme.BORDER}; "
+            f"border-radius: {theme.CARD_RADIUS}px; }}"
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(theme.SPACE_SM + 2, theme.SPACE_SM, theme.SPACE_SM + 2, theme.SPACE_SM)
         layout.setSpacing(theme.SPACE_XS)
@@ -342,8 +358,6 @@ class ToolRow(QWidget):
         desc_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 12px;")
         layout.addWidget(desc_label)
 
-        self.setStyleSheet(f"border-bottom: 1px solid {theme.SELECTED};")
-
 
 class ToolsPage(QWidget):
     """Read-only catalog of every tool ever registered across this
@@ -368,6 +382,7 @@ class ToolsPage(QWidget):
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(theme.SPACE_SM)
 
         tools = list_tools()
         if not tools:
@@ -383,18 +398,28 @@ class ToolsPage(QWidget):
             for category in CATEGORY_ORDER:
                 if category not in by_category:
                     continue
-                category_heading = QLabel(CATEGORY_LABELS.get(category, category.title()))
-                category_heading.setStyleSheet(
-                    f"color: {theme.TEXT_PRIMARY}; font-size: 14px; font-weight: 600; "
-                    f"margin-top: {theme.SPACE_MD + 2}px;"
-                )
-                content_layout.addWidget(category_heading)
+                content_layout.addLayout(self._category_heading(category))
                 for tool in sorted(by_category[category], key=lambda t: t.name):
                     content_layout.addWidget(ToolRow(tool))
 
         content_layout.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
+
+    def _category_heading(self, category):
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACE_XS + 2)
+        icon_label = QLabel()
+        icon_label.setPixmap(theme.category_icon(category).pixmap(QSize(16, 16)))
+        row.addWidget(icon_label)
+        text_label = QLabel(CATEGORY_LABELS.get(category, category.title()))
+        text_label.setStyleSheet(
+            f"color: {theme.TEXT_PRIMARY}; font-size: 14px; font-weight: 600; "
+            f"margin-top: {theme.SPACE_MD + 2}px;"
+        )
+        row.addWidget(text_label)
+        row.addStretch()
+        return row
 
 
 WHISPER_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
@@ -538,22 +563,24 @@ NAV_ITEMS = [
 
 
 class Sidebar(QListWidget):
-    """Persistent left nav. Home/History are real, clickable destinations.
-    Tools/Settings are shown for correct visual shape but disabled --
-    no real content exists behind them yet, so per UI_UX_CONTEXT.md's
-    "truth over illusion" they're not clickable rather than leading to a
-    fake page. Qt skips disabled items for both mouse and keyboard
-    selection, so clicking/arrowing onto them is a no-op, not an error.
+    """Persistent left nav. All four items are real, clickable destinations
+    as of Phase 6; NAV_ITEMS still supports disabling a future item with a
+    "coming soon" tooltip (per UI_UX_CONTEXT.md's "truth over illusion") --
+    Qt skips disabled items for both mouse and keyboard selection, so
+    clicking/arrowing onto one is a no-op, not an error.
     """
+
+    ICON_SIZE = 16
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(SIDEBAR_WIDTH)
+        self.setIconSize(QSize(self.ICON_SIZE, self.ICON_SIZE))
         # Colors/spacing come from the global theme stylesheet's
         # QListWidget#Sidebar rules (see theme.build_stylesheet()).
         self.setObjectName("Sidebar")
         for label, enabled, tooltip in NAV_ITEMS:
-            item = QListWidgetItem(label)
+            item = QListWidgetItem(theme.nav_icon(label), label)
             if not enabled:
                 item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
                 if tooltip:

@@ -12,6 +12,7 @@ pyttsx3
 pywin32
 pygame
 PySide6
+qtawesome
 psutil
 pywinauto
 websockets

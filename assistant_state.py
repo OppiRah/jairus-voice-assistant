@@ -35,9 +35,13 @@ class AssistantState:
         with self._lock:
             self._current_activity = text
 
-    def add_history_entry(self, text: str):
+    def add_history_entry(self, text: str, action_type: str = "unknown"):
         with self._lock:
-            self._history.append({"text": text, "timestamp": time.strftime("%H:%M:%S")})
+            self._history.append({
+                "text": text,
+                "timestamp": time.strftime("%H:%M:%S"),
+                "action_type": action_type,
+            })
 
     def get_snapshot(self):
         with self._lock:
