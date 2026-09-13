@@ -3,20 +3,29 @@ local_library.py — indexes a local music folder and fuzzy-matches spoken
 song/artist requests against filenames, so local files play instead of
 falling back to YouTube when you already have them.
 
-Configure MUSIC_LIBRARY_DIR below to point at your music folder. Leave it as
-None (the default) to disable local library lookup entirely -- nothing
-changes vs. YouTube-only behavior until you set this.
+Set your music folder via Settings in the app (Music Library, Phase 6 UI),
+or by hand in jairus_config.json ("music_library_dir"). Leave it unset
+(the default) to disable local library lookup entirely -- nothing changes
+vs. YouTube-only behavior until you set this.
 """
 
+import os
+import sys
 from pathlib import Path
 from difflib import SequenceMatcher
 
-# Set this to your music folder to enable local library lookup, e.g.:
-# MUSIC_LIBRARY_DIR = r"C:\Users\miscr\Music"
-MUSIC_LIBRARY_DIR = None
+_SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from jairus.configuration import settings
+
+# Set your music folder via Settings in the app (Phase 6, UI), or by hand in
+# jairus_config.json. Read once at import: changing it needs a restart,
+# since the index below is only ever built once per process.
+MUSIC_LIBRARY_DIR = settings.get("music_library_dir")
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".ogg"}
-MATCH_THRESHOLD = 0.55  # how close a spoken request needs to be to a filename to count as a match
 
 _index = None  # list of Path objects, built lazily on first use
 
@@ -62,7 +71,10 @@ def find_local_match(title: str, artist: str = ""):
             best_score = score
             best_path = path
 
-    if best_path and best_score >= MATCH_THRESHOLD:
+    # Read fresh each call (Phase 6, UI): unlike MUSIC_LIBRARY_DIR above,
+    # this doesn't depend on any cached index, so a Settings change applies
+    # immediately, no restart needed.
+    if best_path and best_score >= settings.get("music_match_threshold"):
         print(f"[local_library] matched '{query}' -> {best_path.name} (score={best_score:.2f})")
         return best_path
 

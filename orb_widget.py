@@ -22,16 +22,22 @@ import math
 import os
 import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QVBoxLayout,
@@ -45,6 +51,7 @@ _SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from jairus.configuration import settings
 from jairus.domain.permissions.permission_level import PermissionLevel
 from jairus.tools import (
     list_tools,
@@ -397,12 +404,143 @@ class ToolsPage(QWidget):
         outer.addWidget(scroll)
 
 
+WHISPER_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+
+LIVE_NOTE_COLOR = "#4fd18b"     # matches the Healthy color -- green means "just works"
+RESTART_NOTE_COLOR = "#e0a33c"  # matches the Ollama-unavailable amber -- needs an action first
+
+
+class SettingsPage(QWidget):
+    """Real, config-file-backed settings for the vetted list of genuinely
+    user-facing values -- see SETTINGS_SYSTEM.md for the full reasoning on
+    which project-wide constants made the cut (and which didn't). Every
+    field here actually changes real behavior when saved via
+    jairus.configuration.settings; each field honestly states whether that
+    happens immediately or needs a restart, per UI_UX_CONTEXT.md's "truth
+    over illusion" -- nothing here claims an instant effect that isn't real.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(4)
+
+        heading = QLabel("Settings")
+        heading.setStyleSheet("color: #e8eaf0; font-size: 16px; font-weight: 600;")
+        outer.addWidget(heading)
+
+        current = settings.all_settings()
+
+        outer.addWidget(self._section_label("Wake-word sensitivity"))
+        self.sensitivity_spin = QDoubleSpinBox()
+        self.sensitivity_spin.setRange(0.05, 1.0)
+        self.sensitivity_spin.setSingleStep(0.05)
+        self.sensitivity_spin.setValue(float(current["wake_word_sensitivity"]))
+        outer.addWidget(self.sensitivity_spin)
+        outer.addWidget(self._note(
+            "Higher = fewer false triggers, but you may need to say \"hey jairus\" more "
+            "clearly. Applies immediately -- no restart needed.",
+            live=True,
+        ))
+
+        outer.addWidget(self._section_label("Whisper model size"))
+        self.model_size_combo = QComboBox()
+        self.model_size_combo.addItems(WHISPER_MODEL_SIZES)
+        idx = self.model_size_combo.findText(str(current["whisper_model_size"]))
+        self.model_size_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        outer.addWidget(self.model_size_combo)
+        outer.addWidget(self._note(
+            "Larger = more accurate transcription, slower, more VRAM. "
+            "Restart Jairus to apply.",
+            live=False,
+        ))
+
+        outer.addWidget(self._section_label("Music library folder"))
+        folder_row = QHBoxLayout()
+        self.library_edit = QLineEdit(str(current["music_library_dir"] or ""))
+        self.library_edit.setPlaceholderText("Leave empty to disable local library lookup")
+        folder_row.addWidget(self.library_edit)
+        browse_button = QPushButton("Browse…")
+        browse_button.clicked.connect(self._browse_folder)
+        folder_row.addWidget(browse_button)
+        outer.addLayout(folder_row)
+        outer.addWidget(self._note(
+            "Local files here play instead of falling back to YouTube. "
+            "Restart Jairus to apply.",
+            live=False,
+        ))
+
+        outer.addWidget(self._section_label("Music match threshold (advanced)"))
+        self.match_spin = QDoubleSpinBox()
+        self.match_spin.setRange(0.0, 1.0)
+        self.match_spin.setSingleStep(0.05)
+        self.match_spin.setValue(float(current["music_match_threshold"]))
+        outer.addWidget(self.match_spin)
+        outer.addWidget(self._note(
+            "How closely a spoken request must match a local filename before it's used "
+            "instead of YouTube. Applies immediately -- no restart needed.",
+            live=True,
+        ))
+
+        outer.addWidget(self._section_label("Android pairing code"))
+        self.pairing_edit = QLineEdit(str(current["android_pairing_code"]))
+        outer.addWidget(self.pairing_edit)
+        outer.addWidget(self._note(
+            "Shared secret an Android device must send to control Jairus over the LAN "
+            "-- change this from the default. The Android Gateway (run_gateway.py) runs "
+            "as its own separate process, not part of this window, so this takes effect "
+            "the next time that process is started, not by restarting Jairus itself.",
+            live=False,
+        ))
+
+        outer.addStretch()
+
+        save_row = QHBoxLayout()
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self._save)
+        save_row.addWidget(self.save_button)
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {LIVE_NOTE_COLOR}; font-size: 12px;")
+        save_row.addWidget(self.status_label)
+        save_row.addStretch()
+        outer.addLayout(save_row)
+
+    def _section_label(self, text):
+        label = QLabel(text)
+        label.setStyleSheet("color: #e8eaf0; font-size: 13px; font-weight: 600; margin-top: 12px;")
+        return label
+
+    def _note(self, text, live: bool):
+        label = QLabel(text)
+        label.setWordWrap(True)
+        color = LIVE_NOTE_COLOR if live else RESTART_NOTE_COLOR
+        label.setStyleSheet(f"color: {color}; font-size: 11px;")
+        return label
+
+    def _browse_folder(self):
+        start_dir = self.library_edit.text().strip() or str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, "Choose music library folder", start_dir)
+        if folder:
+            self.library_edit.setText(folder)
+
+    def _save(self):
+        settings.save({
+            "wake_word_sensitivity": self.sensitivity_spin.value(),
+            "whisper_model_size": self.model_size_combo.currentText(),
+            "music_library_dir": self.library_edit.text().strip() or None,
+            "music_match_threshold": self.match_spin.value(),
+            "android_pairing_code": self.pairing_edit.text().strip(),
+        })
+        self.status_label.setText("Saved.")
+
+
 NAV_ITEMS = [
     # (label, enabled, tooltip-when-disabled)
     ("Home", True, None),
     ("History", True, None),
     ("Tools", True, None),
-    ("Settings", False, "Coming soon — no configurable settings yet"),
+    ("Settings", True, None),
 ]
 
 
@@ -491,6 +629,7 @@ class OrbWindow(QMainWindow):
         self.stack.addWidget(HomePage(state, self.stack))  # row 0
         self.stack.addWidget(HistoryPage(state, self.stack))  # row 1
         self.stack.addWidget(ToolsPage(self.stack))  # row 2
+        self.stack.addWidget(SettingsPage(self.stack))  # row 3
         sidebar.currentRowChanged.connect(self._on_nav_changed)
 
         layout.addWidget(sidebar)
@@ -505,8 +644,8 @@ class OrbWindow(QMainWindow):
         status_bar.addPermanentWidget(HealthIndicator(state, self))
 
     def _on_nav_changed(self, row):
-        # Home (0), History (1), Tools (2) are real stack pages; Settings
-        # is disabled in the sidebar so this never fires for that row.
+        # Home (0), History (1), Tools (2), Settings (3) are all real,
+        # enabled stack pages now (Phase 6).
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
 

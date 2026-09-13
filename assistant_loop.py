@@ -52,6 +52,7 @@ _SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from jairus.configuration import settings
 from jairus.interfaces.voice import submit_voice_command
 
 # --- Jairus migration (Phase 11): shadow-mode Agent Core. Runs ALONGSIDE the
@@ -104,8 +105,11 @@ def _shadow_evaluate(text: str) -> None:
 # until/unless a custom wake word model gets trained for "hey jairus" down the line.
 WAKE_WORD_MODEL = "hey_jairus.onnx"
 SAMPLE_RATE = 16000
-DETECTION_THRESHOLD = 0.5
 CHUNK_SIZE = 1280  # openwakeword expects 80ms chunks at 16kHz
+# Wake-word sensitivity (Phase 6, UI): read fresh from settings on every
+# loop iteration below, not cached here -- a Settings change takes effect
+# on the very next audio chunk, no restart needed. Default (0.5) lives in
+# jairus.configuration.settings so there's one source of truth for it.
 
 # Phase 3 (UI): backend health check — same Ollama instance intent_parser.py
 # talks to, just its lightweight root endpoint instead of /api/generate, so
@@ -267,7 +271,7 @@ def run_assistant(state):
             prediction = oww_model.predict(audio_chunk)
             score = prediction.get(wake_key, 0)
 
-            if score > DETECTION_THRESHOLD:
+            if score > settings.get("wake_word_sensitivity"):
                 print(f"\n[wake] detected! (score={score:.2f})")
                 stream.stop()
                 state.set_status("listening")

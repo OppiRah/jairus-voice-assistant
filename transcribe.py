@@ -31,13 +31,23 @@ def _add_cuda_dll_dirs():
 
 _add_cuda_dll_dirs()
 
+import sys
+
+_SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 import numpy as np
 from faster_whisper import WhisperModel
 
+from jairus.configuration import settings
+
 # "small" is a good balance for a 6GB VRAM card. Bump to "medium" if accuracy
 # is bad and you don't mind ~1-2s more latency; drop to "base" if VRAM is tight
-# while Ollama is also loaded.
-MODEL_SIZE = "small"
+# while Ollama is also loaded. Read once at import (Phase 6, UI): changing
+# this via Settings needs a restart to take effect, since _get_model() below
+# caches the loaded model for the process's lifetime.
+MODEL_SIZE = settings.get("whisper_model_size")
 
 _model = None
 

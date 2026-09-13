@@ -8,3 +8,6 @@ __pycache__/
 # Brave browser profile used for CDP automation.
 # Contains cookies / session / login data — must never be committed.
 browser_profile/
+
+# User settings (Android pairing code, personal music library path).
+jairus_config.json
