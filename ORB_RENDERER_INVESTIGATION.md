@@ -562,6 +562,194 @@ Stated plainly, not softened:
 
 ---
 
+## 9. Glass/PBR orb material investigation — 2026-09-13
+
+Investigation into whether a layered glass/metal "crystalline" material
+(refraction, reflection, Fresnel edge-brightening — the concept image's
+material language, applied to the orb object only, never a rendered
+room/environment around it) is achievable in real time inside this
+project's transparent, OS-composited window. **Documentation and one
+small, isolated proof-of-concept only — the full multi-layer effect is
+explicitly not implemented this pass**, same proportional caution as the
+original technology investigation and the PoC that validated it.
+
+### Critical question, answered first: what does "behind the glass" even mean here?
+
+**Answer: nothing real. A `SCREEN_TEXTURE`-based refraction shader in this
+project can only ever refract Godot's own rendered scene (the core, rings,
+particles, other glass shells) — never the user's real desktop, even
+though the whole point of this renderer is a window transparent enough to
+show that real desktop.** This was confirmed two ways, not assumed:
+
+1. **Documentation.** Godot 4 removed the old built-in `SCREEN_TEXTURE`
+   variable entirely — current spatial shaders must declare their own
+   `sampler2D` with the `hint_screen_texture` hint. The official
+   screen-reading-shaders tutorial states the capture timing plainly: in
+   3D, "the screen is copied after the opaque geometry pass, but before
+   the transparent geometry pass." That copy happens **entirely inside
+   Godot's own render pipeline**, before Godot has even finished drawing
+   its own frame — let alone before the OS window compositor (which is
+   what actually blends Godot's finished, alpha-carrying frame with the
+   real desktop behind it) ever runs. There is no pipeline stage, at any
+   point, where Godot's shaders have access to "the real screen behind
+   this window" as pixel data. Independently, current Godot community
+   reports describe the same limitation directly: "running fragment
+   shaders with per-pixel transparency doesn't affect the background
+   behind the window," and users attempting exactly this (`SCREEN_TEXTURE`
+   sampling the real desktop) report it "hasn't always worked" — because
+   it fundamentally can't, not because of a fixable bug.
+2. **Empirical test** (see below): a refraction shader built specifically
+   to test this showed a warped smear of a bright magenta marker sphere
+   placed a small distance behind it in the Godot scene — never the real
+   desktop wallpaper visible in the same screenshot, one shell over.
+
+**Consequence**: "glass that refracts what's really behind it" is not a
+coherent goal for this renderer, ever — not a missing setting, not a
+renderer-method limitation, not something a future Godot version fixes.
+Any refraction-style shader here can only ever bend a view of *other Jairus
+orb geometry* (which is a legitimate, if different, effect — see below),
+never the desktop. The crystalline "glass" feel has to come from a
+technique that doesn't depend on sampling anything "behind" the object at
+all.
+
+### Recommended technique: Fresnel-based rim lighting, not refraction
+
+A Fresnel effect — surface brightness/opacity driven purely by the angle
+between the surface normal and the view direction, both real built-ins in
+Godot's spatial shader (`NORMAL` and `VIEW`, confirmed via the official
+shader reference; view space, no `hint_screen_texture` dependency) — needs
+no idea of "what's behind the object" at all. It reads as dim/transparent
+head-on and brightens toward the silhouette edge, which is exactly the
+"glowing rim, see-through core" read of the concept image's glass material,
+and it is *fully coherent* in a transparent OS-composited window because it
+never tries to sample one. This is the recommended primary technique for
+the orb's glass shells.
+
+A `SCREEN_TEXTURE`-based lensing effect (subtly warping the view of the
+orb's *own* other elements — core, rings, particles — as seen through an
+outer shell) is a real, legitimate secondary enhancement worth its own
+small follow-up test, honestly framed as "distorts the orb's own other
+geometry," never as "shows the desktop." Not decided or implemented here.
+
+### Rendering method constraints (Mobile, not Forward+)
+
+Per the previous phase's finding, the renderer is locked to **Mobile**
+(Vulkan Forward Mobile) for real bloom, with the Windows 11 + Vulkan
+transparency risk already re-verified on this machine — that decision is
+not being reopened here. Checked what Mobile gives up relative to
+Forward+ for glass-material work specifically, via Godot's own renderer
+comparison docs:
+
+- **Screen-space reflections (SSR)**: Forward+ only. Not available on
+  Mobile or Compatibility. A true "reflects the rest of the 3D scene"
+  effect via SSR is off the table on the renderer this project uses.
+- **`ReflectionProbe`**: supported on Mobile (up to 8 per mesh, vs.
+  unlimited on Forward+) — 8 is far more than this scene would ever need
+  (at most one probe for the orb). A probe-based reflection is technically
+  viable on Mobile if wanted later, but it reflects a captured cubemap of
+  Godot's *own* surroundings (the same "no real desktop" limitation as
+  `SCREEN_TEXTURE`, just via a different mechanism) — not a reason to
+  prefer it over Fresnel for this use case.
+- **`hint_screen_texture` / screen texture, depth texture**: supported on
+  all three rendering methods including Mobile — so the diagnostic
+  refraction shader below runs identically regardless of this renderer
+  choice; the "no real desktop" limitation is architectural, not
+  Mobile-specific.
+
+Net effect: Mobile does not block the recommended Fresnel technique at
+all (it needs none of Forward+'s extra features), and does not need to be
+reopened for this investigation.
+
+### Layered transparency sorting
+
+Godot's own contributors describe this plainly, not as a bug but as an
+architectural property: transparent objects are sorted by distance to the
+camera **using their AABB**, which "fails for overlapping or large
+transparent surfaces." For a design with multiple concentric/overlapping
+glass shells around one core (the concept image's layered look), this is
+a real, known risk, not a hypothetical one — expect visible artifacts
+(a shell's back faces drawing over its own front faces, or an inner shell
+drawing over an outer one when their bounding boxes overlap) with three or
+more closely-nested shells, worse than with the two widely-separated
+shells this pass's POC used side by side. Concrete, real mitigations
+confirmed to exist (not proposed blind): `BaseMaterial3D`/`ShaderMaterial`
+support `cull_mode` (this pass's shells already use `cull_back`, avoiding
+a shell sorting against its own back faces), and `Material.render_priority`
+lets overlapping shells be given an explicit, deterministic draw order
+instead of relying on Godot's automatic (and, for overlapping shells,
+unreliable) AABB guess. Any future multi-shell pass should keep the shell
+count low (2-3) and lean on `render_priority` rather than trusting
+automatic sorting.
+
+### Performance
+
+Measured, not guessed, with vsync disabled so relative GPU cost is
+actually visible (both real windowed Vulkan/Mobile runs on this machine,
+5 seconds each):
+
+- Current production `orb_scene.tscn` (core, 2 rings, 2 particle-flicker
+  arcs, 64 ambient particles, bloom enabled): **~1608 FPS average**,
+  uncapped.
+- This pass's isolated glass POC scene (2 shell spheres — one Fresnel, one
+  diagnostic refraction — plus one marker sphere, no particles/bloom):
+  **~2340 FPS average**, uncapped.
+
+These two numbers aren't a clean "with glass vs. without" delta (the POC
+scene is a different, simpler scene overall, not the production scene
+with shells added) — that combined measurement is deferred to when the
+effect is actually built, consistent with not implementing the full
+effect this pass. What they do establish honestly: the current production
+scene, doing meaningfully more work than either test shell (real
+particles, real bloom, real ring/arc geometry), still renders at over
+25x this app's practical 60 FPS target with headroom to spare on this
+hardware. Both candidate shaders here are simple (a handful of scalar
+ops and, for the diagnostic one, a single texture sample — no loops, no
+multi-pass effects). Adding 2-4 shells using techniques this cheap to the
+real orb scene is very unlikely to create a real performance problem on
+this machine; it should still be re-measured on the real combined scene
+once actually built, not assumed permanently safe.
+
+### Self-verification: real screenshot, both techniques compared directly
+
+Built `glass_poc_test.tscn` / `.gd` and two real shader files
+(`glass_poc_fresnel.gdshader`, `glass_poc_refraction.gdshader`) — entirely
+standalone, not wired into `orb_scene.tscn`/`orb_controller.gd` in any
+way. Ran it as a real (non-headless) windowed Vulkan process and captured
+a real OS-level desktop screenshot (`System.Drawing.Graphics.CopyFromScreen`
+over the actual live desktop, per the rendering-quality pass's confirmed
+lesson that in-engine offscreen capture doesn't represent final
+OS-composited transparency correctly) — not an in-engine capture, and not
+assumed to look a particular way.
+
+What the screenshot actually shows: the desktop wallpaper is genuinely
+visible everywhere around both shells (transparency intact); the left
+(Fresnel) shell reads as a convincing dim-center, bright-rim glass sphere;
+the right (diagnostic refraction) shell shows a warped magenta smear on
+black — the `BackgroundMarker` sphere placed just behind it in the Godot
+scene, distorted by the shader's normal-based UV offset — with no trace of
+the real desktop wallpaper showing through that shell's surface, even
+though the same wallpaper is fully visible immediately around it. This is
+the empirical confirmation of the critical question above, not an
+inference from docs alone.
+
+### Verdict
+
+Fresnel-based rim lighting is the recommended, validated-in-principle
+technique for the orb's glass material — real, coherent in this
+transparent-window context, cheap, and confirmed to look like a genuine
+glass edge in a real screenshot on real hardware. Genuine `SCREEN_TEXTURE`
+refraction remains available only as a same-scene lensing effect (never a
+desktop-refraction effect, which is not achievable here under any
+technique) and is left as a separate, smaller follow-up rather than
+folded into this recommendation. Layered-shell sorting is a real,
+named risk with known, real mitigations (`cull_back`, `render_priority`),
+not yet exercised at the shell counts a full effect would need.
+Performance headroom looks comfortable based on isolated measurements,
+pending a real combined-scene measurement once the effect is actually
+built. No renderer-method change is proposed or needed.
+
+---
+
 ## Research sources
 
 Findings above on Qt/PySide6 transparency, Godot's transparent-window
@@ -587,3 +775,17 @@ web search on 2026-09-13:
 - [Seamless Inter-Process Communication with Godot's execute_with_pipe](https://dev.to/jeankouss/seamless-inter-process-communication-with-godots-executewithpipe-537i)
 - [Glow Shader in Shadertoy — inspirnathan.com](https://inspirnathan.com/posts/65-glow-shader-in-shadertoy/)
 - [Bloom (shader effect) — Wikipedia](https://en.wikipedia.org/wiki/Bloom_(shader_effect))
+
+Section 9's findings (SCREEN_TEXTURE/hint_screen_texture semantics and
+timing, NORMAL/VIEW spatial shader built-ins, Forward+ vs. Mobile renderer
+feature support, and Godot's own AABB-based transparency sorting
+limitation) were gathered via web search and documentation lookup on
+2026-09-13, alongside this pass's own real screenshot/FPS measurements:
+
+- [Screen-reading shaders — Godot Engine documentation](https://docs.godotengine.org/en/stable/tutorials/shaders/screen-reading_shaders.html)
+- [Spatial shaders — Godot Engine documentation](https://docs.godotengine.org/en/stable/tutorials/shaders/shader_reference/spatial_shader.html)
+- [SCREEN_TEXTURE per pixel transparency — Godot Forum](https://forum.godotengine.org/t/screen-texture-per-pixel-transparency/7120)
+- [Window transparency + hidden screen-reading shader over Camera3D — godotengine/godot#83939](https://github.com/godotengine/godot/issues/83939)
+- [Renderers overview (Forward+/Mobile/Compatibility comparison) — Godot Engine documentation](https://docs.godotengine.org/en/stable/tutorials/rendering/renderers.html)
+- [Transparent object sorting? — Godot Community Forums](https://godotforums.org/d/26773-transparent-object-sorting)
+- [GLES3 - Depth sorting problem with overlapping transparent textures — godotengine/godot#43253](https://github.com/godotengine/godot/issues/43253)
