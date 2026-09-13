@@ -107,6 +107,77 @@ const RING_B_SPEED_FACTOR := -0.7  # negative: opposite direction, slightly slow
 const RING_TILT_DEG := 55.0  # tilt around X, shared by both rings
 const RING_B_ROLL_DEG := 90.0  # RingB's extra Z-axis roll, applied after the shared tilt
 
+# Pass B -- segmented ring geometry (per ORB_CONCEPT_GAP_ANALYSIS.md's
+# structure gap and design-doc section 5: "Do not simply keep adding
+# complete torus rings"). RingA/RingB are no longer single TorusMesh
+# nodes; each is now a Node3D container (still receiving the same
+# RING_TILT_DEG/RING_B_ROLL_DEG transform as before, unchanged) holding
+# several flat ribbon segments with real angular gaps between them,
+# built with the same SurfaceTool triangle-strip technique already
+# validated twice in this project (the energy arcs, and Pass A's
+# CoreHousing reuse of the glass shell shader) -- no new geometry-
+# building approach introduced. Segments lie flat in the local XY plane
+# (matching TorusMesh's own default orientation, per RING_TILT_DEG's
+# existing comment above), parameterized directly by inner/outer radius
+# rather than the arcs' tangent-perpendicular method: a circular path's
+# "thickness direction" at any point IS the radial direction, so this is
+# simpler and exactly equivalent for a ring shape.
+#
+# Each entry: start_deg/span_deg lay out real, deliberately UNEQUAL
+# segment lengths and gaps (section 12's "controlled asymmetry" -- not
+# evenly-sliced, not symmetric) -- verified by hand to be non-overlapping
+# and to leave a visible gap before wrapping back to the first segment.
+# speed_factor is used starting in this pass's stage 2 (independent
+# per-segment rotation); stage 1 builds the geometry only.
+const RING_SEGMENT_DEGREES_PER_POINT := 8.0  # geometry density along a segment's arc -- similar vertex spacing to the energy arcs
+const RING_A_INNER_RADIUS := 1.3
+const RING_A_OUTER_RADIUS := 1.45
+const RING_A_SEGMENTS := [
+	{"start_deg": 40.0, "span_deg": 70.0, "speed_factor": 1.4},
+	{"start_deg": 135.0, "span_deg": 50.0, "speed_factor": -0.6},
+	{"start_deg": 220.0, "span_deg": 85.0, "speed_factor": 0.85},
+	{"start_deg": 325.0, "span_deg": 35.0, "speed_factor": 1.15},
+]
+const RING_B_INNER_RADIUS := 1.55
+const RING_B_OUTER_RADIUS := 1.7
+const RING_B_SEGMENTS := [
+	{"start_deg": 70.0, "span_deg": 100.0, "speed_factor": -0.75},
+	{"start_deg": 220.0, "span_deg": 60.0, "speed_factor": 1.25},
+	{"start_deg": 310.0, "span_deg": 40.0, "speed_factor": 0.9},
+]
+
+# Pass B -- dark angular "plate" elements (design-doc section 8: metal/
+# mechanical components should contrast with everything luminous). Unlike
+# every other material in this file, plates deliberately do NOT go
+# through _make_translucent_material() -- they keep StandardMaterial3D's
+# real default shading (shading_mode is left at its default
+# SHADING_MODE_PER_PIXEL, emission_enabled left at its default false), so
+# the scene's existing OmniLight3D gives them genuine specular
+# highlights instead of another flat unshaded glow. metallic/roughness
+# push that further toward "brushed dark metal." Placement (angle_deg/
+# radius/height/rotation_deg) is deliberately UNEVEN -- not evenly
+# spaced around the circle, not mirrored, different depths -- per
+# section 12's "controlled asymmetry": three distinct numbers chosen by
+# hand, not a formula that would produce even spacing.
+const PLATE_BASE_COLOR := Color(0.09, 0.095, 0.11)
+const PLATE_METALLIC := 0.65
+const PLATE_ROUGHNESS := 0.35
+const PLATE_SPIN_SPEED := 0.12  # rad/s at plate_activity=1.0 -- slow and heavy-feeling, not energetic like the rings/arcs
+const PLATE_CONFIGS := [
+	{
+		"angle_deg": 35.0, "radius": 1.12, "height": 0.32,
+		"size": Vector3(0.55, 0.85, 0.035), "rotation_deg": Vector3(20.0, 10.0, 55.0),
+	},
+	{
+		"angle_deg": 158.0, "radius": 1.58, "height": -0.42,
+		"size": Vector3(0.4, 0.6, 0.03), "rotation_deg": Vector3(-15.0, 70.0, 10.0),
+	},
+	{
+		"angle_deg": 262.0, "radius": 0.92, "height": 0.14,
+		"size": Vector3(0.62, 0.48, 0.04), "rotation_deg": Vector3(35.0, -25.0, 120.0),
+	},
+]
+
 # Energy arcs: built once as static ribbon meshes at _ready() (regenerating
 # geometry every frame is real, avoidable CSG/mesh-rebuild cost this pass
 # doesn't need) -- their "crackling" comes from rotating slowly plus
@@ -267,6 +338,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.0, "arc_frequency": 0.15,
 		"glass_rim_intensity": 1.0, "glass_lens_strength": 1.0,
 		"core_intensity": 1.0,
+		"segment_spread": 0.35,
+		"plate_activity": 0.3,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -277,6 +350,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.2, "arc_frequency": 0.3,
 		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.1,
 		"core_intensity": 1.05,
+		"segment_spread": 0.45,
+		"plate_activity": 0.4,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -287,6 +362,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.4, "arc_frequency": 0.8,
 		"glass_rim_intensity": 1.3, "glass_lens_strength": 1.6,
 		"core_intensity": 1.15,
+		"segment_spread": 1.0,
+		"plate_activity": 0.8,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -297,6 +374,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.3, "arc_frequency": 0.4,
 		"glass_rim_intensity": 1.15, "glass_lens_strength": 1.1,
 		"core_intensity": 1.05,
+		"segment_spread": 0.5,
+		"plate_activity": 0.4,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -307,6 +386,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.5, "arc_frequency": 0.5,
 		"glass_rim_intensity": 1.4, "glass_lens_strength": 1.3,
 		"core_intensity": 1.2,
+		"segment_spread": 0.7,
+		"plate_activity": 0.6,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -317,6 +398,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.6, "arc_frequency": 0.2,
 		"glass_rim_intensity": 1.2, "glass_lens_strength": 0.8,
 		"core_intensity": 1.1,
+		"segment_spread": 0.5,
+		"plate_activity": 0.35,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -327,6 +410,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.8, "arc_frequency": 1.5,
 		"glass_rim_intensity": 1.6, "glass_lens_strength": 2.0,
 		"core_intensity": 1.3,
+		"segment_spread": 1.2,
+		"plate_activity": 1.0,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -337,6 +422,8 @@ const STATE_PROFILES := {
 		"arc_intensity": 0.3, "arc_frequency": 0.0,
 		"glass_rim_intensity": 0.15, "glass_lens_strength": 0.1,
 		"core_intensity": 0.2,
+		"segment_spread": 0.05,
+		"plate_activity": 0.02,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -347,20 +434,23 @@ const STATE_PROFILES := {
 		"arc_intensity": 1.1, "arc_frequency": 0.25,
 		"glass_rim_intensity": 1.1, "glass_lens_strength": 1.0,
 		"core_intensity": 1.05,
+		"segment_spread": 0.5,
+		"plate_activity": 0.35,
 	},
 }
 
 @onready var core: MeshInstance3D = $Core
 @onready var particles: GPUParticles3D = $AmbientParticles
 @onready var world_environment: WorldEnvironment = $WorldEnvironment
-@onready var ring_a: MeshInstance3D = $RingA
-@onready var ring_b: MeshInstance3D = $RingB
+@onready var ring_a: Node3D = $RingA  # Pass B: container for segments, not a single mesh anymore -- see RING_A_SEGMENTS
+@onready var ring_b: Node3D = $RingB
 @onready var arc_a: MeshInstance3D = $ArcA
 @onready var arc_b: MeshInstance3D = $ArcB
 @onready var activity_label: Label = $UI/ActivityLabel
 @onready var glass_shells: Array[MeshInstance3D] = [$GlassShell1, $GlassShell2, $GlassShell3, $GlassShell4]
 @onready var core_housing: MeshInstance3D = $CoreHousing
 @onready var core_emblem: MeshInstance3D = $CoreEmblem
+@onready var plates: Array[MeshInstance3D] = [$Plate1, $Plate2, $Plate3]
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -382,6 +472,8 @@ var _activity_tween: Tween
 var _glass_materials: Array[ShaderMaterial] = []
 var _housing_material: ShaderMaterial
 var _emblem_material: StandardMaterial3D
+var _ring_segments_a: Array[MeshInstance3D] = []
+var _ring_segments_b: Array[MeshInstance3D] = []
 
 
 func _ready() -> void:
@@ -428,12 +520,12 @@ func _ready() -> void:
 
 	_ring_material_a = _make_translucent_material()
 	_ring_material_a.render_priority = RENDER_PRIORITY_RING_A
-	ring_a.set_surface_override_material(0, _ring_material_a)
+	_build_ring_segments(ring_a, RING_A_SEGMENTS, RING_A_INNER_RADIUS, RING_A_OUTER_RADIUS, _ring_material_a, _ring_segments_a)
 	ring_a.rotate_x(deg_to_rad(RING_TILT_DEG))
 
 	_ring_material_b = _make_translucent_material()
 	_ring_material_b.render_priority = RENDER_PRIORITY_RING_B
-	ring_b.set_surface_override_material(0, _ring_material_b)
+	_build_ring_segments(ring_b, RING_B_SEGMENTS, RING_B_INNER_RADIUS, RING_B_OUTER_RADIUS, _ring_material_b, _ring_segments_b)
 	ring_b.rotate_x(deg_to_rad(RING_TILT_DEG))
 	ring_b.rotate_z(deg_to_rad(RING_B_ROLL_DEG))
 
@@ -448,6 +540,27 @@ func _ready() -> void:
 	arc_b.set_surface_override_material(0, _arc_material_b)
 	arc_b.rotate_y(deg_to_rad(120.0))  # offset so the two arcs don't start overlapping
 
+	for i in range(plates.size()):
+		var plate := plates[i]
+		var config: Dictionary = PLATE_CONFIGS[i]
+		var box := BoxMesh.new()
+		box.size = config["size"]
+		plate.mesh = box
+
+		var angle: float = deg_to_rad(config["angle_deg"])
+		var radius: float = config["radius"]
+		plate.position = Vector3(cos(angle) * radius, config["height"], sin(angle) * radius)
+		var rot: Vector3 = config["rotation_deg"]
+		plate.rotate_x(deg_to_rad(rot.x))
+		plate.rotate_y(deg_to_rad(rot.y))
+		plate.rotate_z(deg_to_rad(rot.z))
+
+		var plate_mat := StandardMaterial3D.new()
+		plate_mat.albedo_color = PLATE_BASE_COLOR
+		plate_mat.metallic = PLATE_METALLIC
+		plate_mat.roughness = PLATE_ROUGHNESS
+		plate.set_surface_override_material(0, plate_mat)
+
 	for i in range(glass_shells.size()):
 		var shell := glass_shells[i]
 		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
@@ -461,7 +574,8 @@ func _ready() -> void:
 		shell.set_surface_override_material(0, mat)
 		_glass_materials.append(mat)
 
-	print("[orb_controller] geometry ready: RingA/RingB (TorusMesh), ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d" % [
+	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d" % [
+		_ring_segments_a.size(), _ring_segments_b.size(), plates.size(),
 		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
 		EMBLEM_POINTS, core_emblem.mesh.surface_get_array_len(0),
 	])
@@ -570,6 +684,46 @@ func _build_emblem_mesh() -> ArrayMesh:
 	return st.commit()
 
 
+## Builds one ring segment as a flat annulus-wedge ribbon (inner/outer
+## radius alternating vertices along a triangle strip, span_deg wide),
+## starting at local angle 0 -- the segment NODE itself is rotated by its
+## own start_deg once in _build_ring_segments() below, the same pattern
+## RING_TILT_DEG already uses for the whole ring. Same SurfaceTool
+## technique as _build_arc_mesh(); see the RING_A_SEGMENTS comment for
+## why inner/outer radius is used directly instead of a tangent-
+## perpendicular offset.
+func _build_ring_segment_mesh(inner_r: float, outer_r: float, span_deg: float) -> ArrayMesh:
+	var span_rad := deg_to_rad(span_deg)
+	var point_count: int = maxi(3, int(ceil(span_deg / RING_SEGMENT_DEGREES_PER_POINT)) + 1)
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in range(point_count):
+		var t := float(i) / float(point_count - 1)
+		var angle := span_rad * t
+		st.add_vertex(Vector3(cos(angle) * inner_r, sin(angle) * inner_r, 0.0))
+		st.add_vertex(Vector3(cos(angle) * outer_r, sin(angle) * outer_r, 0.0))
+
+	return st.commit()
+
+
+## Builds every segment for one ring: one MeshInstance3D child per
+## `configs` entry, sharing `mat` (the same single Material resource
+## already shared across a whole ring before this pass -- still correct
+## now that a ring is several nodes instead of one, since Godot lets any
+## number of MeshInstance3Ds reference the same Material). Appends each
+## created node to `out_segments` so _process() can spin them
+## individually later in this pass.
+func _build_ring_segments(parent: Node3D, configs: Array, inner_r: float, outer_r: float, mat: StandardMaterial3D, out_segments: Array[MeshInstance3D]) -> void:
+	for config in configs:
+		var seg := MeshInstance3D.new()
+		seg.mesh = _build_ring_segment_mesh(inner_r, outer_r, config["span_deg"])
+		seg.set_surface_override_material(0, mat)
+		parent.add_child(seg)
+		seg.rotate_z(deg_to_rad(config["start_deg"]))
+		out_segments.append(seg)
+
+
 func _process(delta: float) -> void:
 	_elapsed += delta
 	_poll_socket()
@@ -629,6 +783,7 @@ func _process(delta: float) -> void:
 	_update_arcs(delta, profile)
 	_update_glass_shells(profile)
 	_update_core_housing()
+	_update_plates(delta, profile)
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -636,15 +791,39 @@ func _process(delta: float) -> void:
 func _update_rings(delta: float, profile: Dictionary) -> void:
 	var ring_speed: float = profile["ring_speed"]
 	var ring_opacity: float = profile["ring_opacity"]
+	var segment_spread: float = profile.get("segment_spread", 0.0)
 
 	ring_a.rotate_z(ring_speed * delta)
 	ring_b.rotate_z(ring_speed * RING_B_SPEED_FACTOR * delta)
+	_spin_ring_segments(_ring_segments_a, RING_A_SEGMENTS, ring_speed, segment_spread, delta)
+	_spin_ring_segments(_ring_segments_b, RING_B_SEGMENTS, ring_speed * RING_B_SPEED_FACTOR, segment_spread, delta)
 
 	var ring_color := Color(_current_color.r, _current_color.g, _current_color.b, ring_opacity)
 	for mat in [_ring_material_a, _ring_material_b]:
 		mat.albedo_color = ring_color
 		mat.emission = _current_color
 		mat.emission_energy_multiplier = EMISSION_ENERGY * 0.6
+
+
+## Pass B stage 2: each segment already inherits the ring's shared
+## base_speed rotation from its parent Node3D (ring_a/ring_b, rotated in
+## _update_rings() above) -- this adds each segment's own EXTRA rotation
+## on top, scaled by (its structural speed_factor - 1.0) so that at
+## segment_spread=0 every segment still moves in perfect lockstep with
+## the shared rate (identical to stage 1's behavior, and to the pre-Pass-B
+## single-torus rings), and as segment_spread rises toward 1.0 a
+## segment's total rate approaches base_speed*speed_factor -- its own,
+## genuinely independent rotation. This is why speed_factor lives on each
+## segment (a per-segment property) while segment_spread lives in
+## STATE_PROFILES (a per-state property): the design doc asks for both
+## "independently rotating sections" (structural) and per-state motion
+## (behavioral), and this keeps them as two separate, separately-tunable
+## numbers rather than conflating them.
+func _spin_ring_segments(segments: Array[MeshInstance3D], configs: Array, base_speed: float, segment_spread: float, delta: float) -> void:
+	for i in range(segments.size()):
+		var speed_factor: float = configs[i]["speed_factor"]
+		var extra := base_speed * (speed_factor - 1.0) * segment_spread
+		segments[i].rotate_z(extra * delta)
 
 
 func _update_arcs(delta: float, profile: Dictionary) -> void:
@@ -709,6 +888,23 @@ func _update_glass_shells(profile: Dictionary) -> void:
 func _update_core_housing() -> void:
 	var tinted := CORE_HOUSING_BASE_COLOR.lerp(_current_color, 0.15)
 	_housing_material.set_shader_parameter("base_color", tinted)
+
+
+## Plates get NO color/emission update here, deliberately -- unlike every
+## other element in the scene, they never tint toward _current_color.
+## That's the point: a genuinely neutral dark metal that doesn't
+## participate in the energy color story is what makes it read as "the
+## machine's housing" rather than "more energy," per section 8's material
+## contrast. Only their rotation reacts to state, via plate_activity
+## (rotate_object_local so each plate spins around its OWN local Y axis,
+## which differs per plate since each already has a different structural
+## rotation_deg -- so even a shared spin *rate* still looks different per
+## plate on screen, without needing a second per-plate speed constant).
+func _update_plates(delta: float, profile: Dictionary) -> void:
+	var activity: float = profile.get("plate_activity", 0.3)
+	for i in range(plates.size()):
+		var per_plate_rate := PLATE_SPIN_SPEED * (0.7 + 0.3 * float(i))  # mild per-plate variety, deterministic, same spirit as the arcs' seed_offset
+		plates[i].rotate_object_local(Vector3.UP, per_plate_rate * activity * delta)
 
 
 func _compute_breathe(pulse_speed: float, irregular: bool) -> float:

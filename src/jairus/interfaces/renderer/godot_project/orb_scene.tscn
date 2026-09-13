@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://c8p0orbrenderer001"]
+[gd_scene load_steps=8 format=3 uid="uid://c8p0orbrenderer001"]
 
 [ext_resource type="Script" path="res://orb_controller.gd" id="1_script"]
 
@@ -43,18 +43,6 @@ scale_min = 0.5
 scale_max = 1.5
 color = Color(0.7, 0.75, 1, 0.6)
 
-[sub_resource type="TorusMesh" id="TorusMesh_A"]
-inner_radius = 1.3
-outer_radius = 1.45
-ring_segments = 6
-rings = 48
-
-[sub_resource type="TorusMesh" id="TorusMesh_B"]
-inner_radius = 1.55
-outer_radius = 1.7
-ring_segments = 6
-rings = 48
-
 [sub_resource type="SphereMesh" id="SphereMesh_glass_shell"]
 radius = 1.0
 height = 2.0
@@ -90,15 +78,19 @@ lifetime = 2.5
 process_material = SubResource("ParticleProcessMaterial_1")
 draw_pass_1 = SubResource("SphereMesh_particle")
 
-[node name="RingA" type="MeshInstance3D" parent="."]
-mesh = SubResource("TorusMesh_A")
+[node name="RingA" type="Node3D" parent="."]
 
-[node name="RingB" type="MeshInstance3D" parent="."]
-mesh = SubResource("TorusMesh_B")
+[node name="RingB" type="Node3D" parent="."]
 
 [node name="ArcA" type="MeshInstance3D" parent="."]
 
 [node name="ArcB" type="MeshInstance3D" parent="."]
+
+[node name="Plate1" type="MeshInstance3D" parent="."]
+
+[node name="Plate2" type="MeshInstance3D" parent="."]
+
+[node name="Plate3" type="MeshInstance3D" parent="."]
 
 [node name="GlassShell1" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_glass_shell")
