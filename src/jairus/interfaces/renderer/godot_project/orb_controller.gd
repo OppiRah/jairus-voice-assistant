@@ -363,11 +363,38 @@ const PLATE_CONFIGS := [
 const ARC_POINT_COUNT := 31        # Pass B: raised from 7 -- same underlying sin()-based path formula, just sampled far more densely, so the identical deterministic curve reads as a smooth flowing line instead of a jagged low-poly one.
 const ARC_RADIUS := 0.75          # ArcB only now -- distance from the core center its circular path sits at
 const ARC_SPAN_RADIANS := PI * 0.6  # ArcB only now -- how much of a circle it sweeps
-const ARC_JAGGEDNESS := 0.08      # max perpendicular offset applied to interior points, for a "lightning" feel -- shared by both arcs' path generators
+const ARC_JAG_CYCLES := 11.0      # full sin() cycles along the whole path -- ArcB's own fixed value; ArcA derives its own per-frame cycle count from this instead of reusing it directly (see ARC_B_JAG_WAVELENGTH/_RATIO and _build_anchored_arc_points())
+const ARC_JAGGEDNESS := 0.08      # ArcB only now -- max perpendicular offset applied to interior points, for a "lightning" feel
 const ARC_THICKNESS := 0.015      # ribbon half-width
 const ARC_ROTATION_SPEED := 0.35  # rad/s -- ArcB only now (see above); brightness still varies per state for both arcs
 const ARC_EMISSION_ENERGY := 2.2  # Pass A: lowered from 4.0 -- at the old value the arcs out-bloomed the core in every state (a measured bug, see CORE_GLOW_EMISSION_ENERGY above); this baseline, times arc_intensity (max 1.8 at error), now stays under the core's floor in every state
 const ARC_A_ANCHOR_PLATE_INDICES := Vector2i(0, 1)  # indices into `plates` (Plate1/RingA, Plate2/RingB) -- one strut per ring, echoing V2-2's one-accent-per-ring choice, so Conduit A visibly bridges RingA's and RingB's independently-tilted structures (Q3) rather than sitting on just one
+
+# Fix (post-V2-3, built and verified, not assumed): a real diagnostic print
+# across a live rotation cycle showed Plate1/Plate2's actual anchor-to-anchor
+# distance ranging ~1.98 to ~2.65 world units -- 1.4x-1.9x ArcB's own fixed
+# 1.414-unit path (ARC_RADIUS * ARC_SPAN_RADIANS), and continuously changing
+# as RingA/RingB rotate at different relative speeds (RING_B_SPEED_FACTOR
+# and each ring's own per-segment speed_factor). ArcA's path generator was
+# still reusing ARC_JAGGEDNESS/ARC_JAG_CYCLES verbatim -- fine for ArcB's
+# fixed length, but for a length that keeps changing it meant the tooth
+# amplitude-to-wavelength ratio silently drifted with it (bigger anchor
+# separation -> same amplitude stretched over a longer wavelength -> flatter
+# crackle; closer anchors -> tighter crackle), a "breathing" tied purely to
+# rotation phase, never a deliberate state/energy behavior. ARC_B_JAG_
+# WAVELENGTH is ArcB's own real per-tooth wavelength (length / cycles);
+# ARC_B_JAG_RATIO is its own real amplitude-to-wavelength ratio, computed
+# from it rather than asserted -- an earlier back-of-envelope guess of
+# "~0.31" mis-costed ARC_JAG_CYCLES as 5.5 half-cycles instead of 11 full
+# ones; the real ratio is ~0.623. _build_anchored_arc_points() derives
+# ArcA's own per-frame cycle count from its live length so its wavelength
+# always matches ARC_B_JAG_WAVELENGTH (ArcB's own tooth size), and sets its
+# amplitude directly from that same wavelength via ARC_B_JAG_RATIO -- so the
+# ratio always equals ArcB's, and only the TOTAL number of visible teeth
+# grows or shrinks with the conduit's real length, never their individual
+# size or spikiness.
+const ARC_B_JAG_WAVELENGTH := (ARC_RADIUS * ARC_SPAN_RADIANS) / ARC_JAG_CYCLES
+const ARC_B_JAG_RATIO := ARC_JAGGEDNESS / ARC_B_JAG_WAVELENGTH
 
 # Pass B (energy ribbons take 2) -- orb_arc_ribbon.gdshader replaces the
 # old binary sin()>threshold on/off flicker with a continuous brightness
@@ -1104,7 +1131,7 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 		var angle := -ARC_SPAN_RADIANS * 0.5 + ARC_SPAN_RADIANS * t
 		var point := Vector3(sin(angle), 0.0, cos(angle)) * ARC_RADIUS
 		if i > 0 and i < ARC_POINT_COUNT - 1:
-			point.y += sin((t * 11.0 + seed_offset) * TAU) * ARC_JAGGEDNESS
+			point.y += sin((t * ARC_JAG_CYCLES + seed_offset) * TAU) * ARC_JAGGEDNESS
 		points.append(point)
 	return _build_ribbon_strip_mesh(points)
 
@@ -1116,20 +1143,34 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 ## a->b line itself (not a fixed world Y, which only made sense for ArcB's
 ## flat XZ-plane circle) so the "lightning" feel still reads correctly
 ## regardless of the two anchors' actual relative orientation.
+##
+## cycle_count/amplitude are derived from the live a->b length every call,
+## NOT ARC_JAG_CYCLES/ARC_JAGGEDNESS directly -- see the fix comment above
+## ARC_B_JAG_WAVELENGTH for why reusing ArcB's fixed-path constants against
+## ArcA's genuinely different, continuously-changing length caused a real,
+## confirmed "breathing" artifact. Pegging cycle_count to length keeps each
+## tooth's wavelength equal to ArcB's own (ARC_B_JAG_WAVELENGTH); pegging
+## amplitude to that same wavelength via ARC_B_JAG_RATIO keeps the
+## amplitude-to-wavelength ratio equal to ArcB's own too -- so only the
+## TOTAL tooth count changes with length, never the individual tooth shape.
 func _build_anchored_arc_points(point_a: Vector3, point_b: Vector3, seed_offset: float) -> PackedVector3Array:
 	var line := point_b - point_a
-	var line_dir := line.normalized() if line.length() > 0.001 else Vector3.FORWARD
+	var length := line.length()
+	var line_dir := line / length if length > 0.001 else Vector3.FORWARD
 	var jag_axis := line_dir.cross(Vector3.UP)
 	if jag_axis.length() < 0.001:
 		jag_axis = line_dir.cross(Vector3.RIGHT)
 	jag_axis = jag_axis.normalized()
+
+	var cycle_count := length / ARC_B_JAG_WAVELENGTH
+	var amplitude := ARC_B_JAG_RATIO * ARC_B_JAG_WAVELENGTH  # == ARC_JAGGEDNESS; kept as an explicit derivation, not a direct reuse, so the relationship stays obvious if ArcB's own constants ever change
 
 	var points: PackedVector3Array = []
 	for i in range(ARC_POINT_COUNT):
 		var t := float(i) / float(ARC_POINT_COUNT - 1)
 		var point := point_a.lerp(point_b, t)
 		if i > 0 and i < ARC_POINT_COUNT - 1:
-			point += jag_axis * sin((t * 11.0 + seed_offset) * TAU) * ARC_JAGGEDNESS
+			point += jag_axis * sin((t * cycle_count + seed_offset) * TAU) * amplitude
 		points.append(point)
 	return points
 
