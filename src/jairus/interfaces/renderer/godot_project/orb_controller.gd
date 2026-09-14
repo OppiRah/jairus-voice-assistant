@@ -120,27 +120,37 @@ const CORE_EMBLEM_BRIGHTEN := 0.55  # lerp weight toward Color.WHITE, same legib
 # duplicated.
 const RING_B_SPEED_FACTOR := -0.7  # negative: opposite direction, slightly slower
 
-# Both rings tilt the same amount away from facing the camera (TorusMesh's
-# default face-normal is the local Z axis, which starts pointed straight at
-# Camera3D) -- confirmed via a real rendered screenshot that RING_TILT_DEG's
-# distance from 0 controls how edge-on a ring reads, regardless of which
-# axis it's tilted around: the original pass tilted RingA 60 degrees around
-# X (read as a clear ellipse) but RingB 75 degrees around Y (read as a
-# nearly edge-on flat bar, since 75 degrees is much closer to the 90-degree
-# edge-on limit). Both rings now share the same X tilt so both stay equally
-# readable, and RingB gets an additional Z-axis roll on top -- a roll spins
-# the already-tilted ellipse's orientation within the image plane without
-# changing how edge-on it is, so it's the safe way to make the two rings
-# still look like distinct crossing orbits.
-const RING_TILT_DEG := 55.0  # tilt around X, shared by both rings
-const RING_B_ROLL_DEG := 90.0  # RingB's extra Z-axis roll, applied after the shared tilt
+# RingA's tilt (TorusMesh's default face-normal is the local Z axis, which
+# starts pointed straight at Camera3D) -- confirmed via a real rendered
+# screenshot that this distance from 0 controls how edge-on a ring reads:
+# 55 degrees around X reads as a clear, well-foreshortened ellipse. Also
+# reused verbatim by OrbitalParticles below (unchanged from before this
+# pass) so its emission plane keeps matching RingA's specifically.
+const RING_TILT_DEG := 55.0  # tilt around X, RingA only as of the V2-1 structural pass
+
+# V2-1 structural re-architecture (ORB_V2_DESIGN.md Q3): V1 gave RingB the
+# SAME X tilt as RingA plus only an in-plane Z roll -- a roll re-orients an
+# already-identically-shaped ellipse within the image plane but can't change
+# its eccentricity, so two same-eccentricity ellipses at different radii
+# (RingB's 1.55-1.7 band is strictly larger than RingA's 1.3-1.45) generally
+# nest rather than cross, regardless of roll -- confirmed by this pass's own
+# stage-1 screenshot check (see report) that the old scheme in fact never
+# produced a real crossing. RingB now gets a genuinely independent tilt
+# AXIS combination -- a smaller X component (less foreshortened, closer to
+# face-on) PLUS an added Y-axis component (reorienting the ellipse's major
+# axis in 3D, not just rolling it in-plane) -- specifically chosen so its
+# projected path crosses RingA's rather than concentrically containing it.
+const RING_B_TILT_X_DEG := 25.0
+const RING_B_TILT_Y_DEG := 50.0
 
 # Pass B -- segmented ring geometry (per ORB_CONCEPT_GAP_ANALYSIS.md's
 # structure gap and design-doc section 5: "Do not simply keep adding
 # complete torus rings"). RingA/RingB are no longer single TorusMesh
-# nodes; each is now a Node3D container (still receiving the same
-# RING_TILT_DEG/RING_B_ROLL_DEG transform as before, unchanged) holding
-# several flat ribbon segments with real angular gaps between them,
+# nodes; each is now a Node3D container (each receiving its own tilt
+# transform -- see RING_TILT_DEG/RING_B_TILT_X_DEG/RING_B_TILT_Y_DEG's own
+# comments; V2-1 gave the two containers genuinely independent tilt axes,
+# no longer sharing one tilt) holding several flat ribbon segments with
+# real angular gaps between them,
 # built with the same SurfaceTool triangle-strip technique already
 # validated twice in this project (the energy arcs, and Pass A's
 # CoreHousing reuse of the glass shell shader) -- no new geometry-
@@ -257,53 +267,56 @@ const PLATE_SPIN_SPEED := 0.12  # rad/s at plate_activity=1.0 -- slow and heavy-
 # the most aggressive facet-enlarging move available without growing the
 # plate itself.
 const CRYSTAL_SIDES := 3
-# Containment fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 1):
-# radius/height pulled inward on all three plates so (radius + the plate's
-# own worst-case half-diagonal reach) stays comfortably under RingB's 1.7
-# outer edge -- values are PLATE_CONFIGS_FIXED from silhouette_poc_test.gd,
-# verified there by real screenshot to keep every plate fully inside the
-# ring/glow silhouette. size/rotation_deg/angle_deg are UNCHANGED: apparent
-# on-screen prominence comes from size, not radius, so this is a pure
-# reposition, not a shrink -- see the investigation doc's own resolution of
-# the "visible vs. contained" tension.
+# V2-1 structural re-architecture (ORB_V2_DESIGN.md Q3): every prior pass
+# parameterized each plate's angle_deg/radius/height relative only to the
+# shared scene origin -- never relative to any OTHER structural element --
+# which is exactly why the assembly kept reading as "independent orbits
+# sharing a center" no matter how segmented/angular any individual piece
+# became. Plate1/Plate3 are now children of RingA and Plate2 a child of
+# RingB (orb_scene.tscn), so angle_deg/radius/height below are no longer
+# world-space -- they're LOCAL to that ring's own pre-tilt plane, exactly
+# the same convention _build_ring_segment_mesh() already uses for the ring
+# segments themselves (local XY plane, radius measured from the ring's own
+# center) -- so a plate positioned at a segment's own start_deg/span_deg
+# angle, at that ring's own inner_r, sits AT that segment's real endpoint,
+# not at an independently-guessed angle that merely happens to share the
+# same origin. Each plate's radius is then pulled slightly inward from
+# that endpoint (toward CoreHousing) by roughly 0.6x its own half_height,
+# so its own crystal-shard footprint still reaches out to touch/overlap the
+# ring's inner edge rather than sitting fully clear of it. Reparenting also
+# means each plate now automatically inherits its ring's own rotate_z()
+# spin every frame (_update_rings()) on top of its pre-existing independent
+# local spin (_update_plates(), unchanged) -- it moves WITH its anchor
+# ring, which is what "anchored" has to mean once the ring itself moves.
+# size/rotation_deg/CRYSTAL_SIDES/material are all UNCHANGED from the prior
+# pass -- only angle_deg/radius/height and the scene-tree parent changed.
 const PLATE_CONFIGS := [
 	{
-		"angle_deg": 35.0, "radius": 1.0, "height": 0.28,
+		# Anchored to RingA segment 0's far endpoint (start_deg=40 +
+		# span_deg=70 = 110 degrees, RING_A_INNER_RADIUS=1.3). Local height
+		# is a small offset along the ring's own local Z (perpendicular to
+		# its tilted plane), giving this plate a touch of independent depth
+		# within its anchor ring rather than sitting flush in-plane.
+		"angle_deg": 110.0, "radius": 1.0, "height": 0.15,
 		"size": Vector3(0.55, 0.85, 0.035), "rotation_deg": Vector3(20.0, 10.0, 55.0),
 	},
 	{
-		"angle_deg": 158.0, "radius": 1.15, "height": -0.34,
+		# Anchored to RingB segment 1's far endpoint (start_deg=220 +
+		# span_deg=60 = 280 degrees, RING_B_INNER_RADIUS=1.55).
+		"angle_deg": 280.0, "radius": 1.35, "height": -0.1,
 		"size": Vector3(0.4, 0.6, 0.03), "rotation_deg": Vector3(-15.0, 70.0, 10.0),
 	},
 	{
-		# Bug fix (post-Pass-B): originally angle_deg=262.0, radius=0.92 --
-		# at 262 degrees, sin(262 deg) ~= -0.99, so the position vector
-		# landed almost entirely along local Z, the SAME axis the camera
-		# looks down. That put Plate3 only ~2.8 degrees off the camera's
-		# view axis while sitting farther from the camera (world Z ~= -0.91)
-		# than the opaque Core sphere (radius 0.5 at the origin, angular
-		# radius ~9.5 degrees from the camera) -- so the Core fully eclipsed
-		# it, confirmed by a real diagnostic print of both angles before
-		# touching any numbers, not assumed. Enlarging the old radius alone
-		# would NOT have fixed this: at angle_deg=262 nearly the entire
-		# position vector is radial along the view axis, so a bigger radius
-		# mostly just pushes the plate further behind the Core, not further
-		# off-axis. angle_deg=200.0 keeps sin/cos more balanced (position
-		# offset lands mostly in X, which IS perpendicular to the view
-		# axis), putting the plate at ~19.7 degrees off-axis -- clear of the
-		# Core's ~9.5-degree occlusion cone with real margin. radius raised
-		# 0.92->1.3 alongside it (still a distinct third radius from Plate1's
-		# 1.12/Plate2's 1.58) for a clearer, less core-adjacent silhouette.
-		# height/size/rotation_deg untouched -- rotation was never the
-		# problem (face_to_camera_deg=42 degrees, a perfectly normal
-		# readable angle, not edge-on).
-		#
-		# Containment fix (later pass, see PLATE_CONFIGS' own comment above):
-		# radius pulled in again, 1.3->1.1, and height 0.14->0.12 -- this
-		# plate's own worst-case reach was still exceeding RingB's silhouette
-		# alongside Plate1/Plate2's. angle_deg=200.0 (this plate's actual
-		# occlusion fix) is untouched.
-		"angle_deg": 200.0, "radius": 1.1, "height": 0.12,
+		# Anchored to RingA segment 2's near endpoint (start_deg=220,
+		# RING_A_INNER_RADIUS=1.3) -- a different segment from Plate1's
+		# anchor, and the opposite (near, not far) end of it, so all three
+		# plates anchor to visibly distinct points, not a repeated pattern.
+		# The old angle_deg=200.0/radius=1.1 (and the whole prior camera-
+		# occlusion/containment history at this entry) was a world-space
+		# value from before this plate had any anchor relationship at all;
+		# it's superseded, not extended, by this pass's anchor-derived
+		# local placement.
+		"angle_deg": 220.0, "radius": 1.14, "height": 0.05,
 		"size": Vector3(0.62, 0.48, 0.04), "rotation_deg": Vector3(35.0, -25.0, 120.0),
 	},
 ]
@@ -756,7 +769,7 @@ const STATE_PROFILES := {
 @onready var glass_shells: Array[MeshInstance3D] = [$GlassShell1, $GlassShell2, $GlassShell3, $GlassShell4]
 @onready var core_housing: MeshInstance3D = $CoreHousing
 @onready var core_emblem: MeshInstance3D = $CoreEmblem
-@onready var plates: Array[MeshInstance3D] = [$Plate1, $Plate2, $Plate3]
+@onready var plates: Array[MeshInstance3D] = [$RingA/Plate1, $RingB/Plate2, $RingA/Plate3]
 @onready var wisps: Array[MeshInstance3D] = [$Wisp1, $Wisp2, $Wisp3]
 
 var _socket := WebSocketPeer.new()
@@ -864,8 +877,8 @@ func _ready() -> void:
 	_ring_material_b = _make_translucent_material()
 	_ring_material_b.render_priority = RENDER_PRIORITY_RING_B
 	_build_ring_segments(ring_b, RING_B_SEGMENTS, RING_B_INNER_RADIUS, RING_B_OUTER_RADIUS, _ring_material_b, _ring_segments_b)
-	ring_b.rotate_x(deg_to_rad(RING_TILT_DEG))
-	ring_b.rotate_z(deg_to_rad(RING_B_ROLL_DEG))
+	ring_b.rotate_x(deg_to_rad(RING_B_TILT_X_DEG))
+	ring_b.rotate_y(deg_to_rad(RING_B_TILT_Y_DEG))
 
 	_arc_material_a = ShaderMaterial.new()
 	_arc_material_a.shader = ARC_SHADER
@@ -893,7 +906,15 @@ func _ready() -> void:
 
 		var angle: float = deg_to_rad(config["angle_deg"])
 		var radius: float = config["radius"]
-		plate.position = Vector3(cos(angle) * radius, config["height"], sin(angle) * radius)
+		# V2-1: position in the PARENT RING's own local-XY-plane convention
+		# (matching _build_ring_segment_mesh()'s Vector3(cos*r, sin*r, 0.0)
+		# exactly) now that each plate is a child of RingA/RingB, not the
+		# old world-space Vector3(cos*r, height, sin*r) convention (X/Z
+		# orbit plane, Y as world "up") the pre-anchoring version used. Using
+		# the old convention here would have positioned each plate out of
+		# the ring's own plane entirely, undoing the anchoring this pass
+		# exists to build -- caught before trusting a screenshot, not after.
+		plate.position = Vector3(cos(angle) * radius, sin(angle) * radius, config["height"])
 		var rot: Vector3 = config["rotation_deg"]
 		plate.rotate_x(deg_to_rad(rot.x))
 		plate.rotate_y(deg_to_rad(rot.y))
