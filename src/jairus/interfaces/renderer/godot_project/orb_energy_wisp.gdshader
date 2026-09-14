@@ -15,6 +15,21 @@ render_mode blend_add, unshaded, cull_disabled, depth_draw_never, shadows_disabl
 // NoiseTexture2D) breaks the plain radial falloff into an irregular "wisp"
 // shape -- this is what the PoC found makes the difference between a plain
 // glow dot and something that reads as energy/plasma rather than a sprite.
+//
+// V2-4 fix (built and verified, not assumed): ALBEDO was never explicitly
+// assigned here, silently defaulting to opaque white -- and this window's
+// render path composites the base pixel via ALBEDO's own alpha blend, not
+// EMISSION (EMISSION only reaches the final image through the separate
+// glow/bloom extraction pass). Every wisp was therefore always showing a
+// white-blended circle whose color and even brightness never actually
+// tracked base_color/intensity at all -- a real bug, not a design choice,
+// caught by a real screenshot comparison of three deliberately distinct
+// debug colors (see this pass's own report) that all rendered identically
+// white regardless of what was assigned. This is very likely a real
+// contributor to the original wisp pass's own honest "reads as a soft
+// light patch" verdict, never diagnosed at the per-channel level before.
+// ALBEDO now carries the same base_color*intensity EMISSION already did,
+// so the base blended pixel actually shows the intended hue.
 uniform vec3 base_color : source_color = vec3(0.6, 0.8, 1.0);
 uniform float intensity : hint_range(0.0, 5.0) = 1.5;
 uniform float softness : hint_range(0.1, 1.0) = 0.5;
@@ -60,6 +75,7 @@ void fragment() {
 	}
 
 	float a = falloff * noise_mod * opacity_multiplier;
+	ALBEDO = base_color * intensity;
 	EMISSION = base_color * intensity * a;
 	ALPHA = a;
 }

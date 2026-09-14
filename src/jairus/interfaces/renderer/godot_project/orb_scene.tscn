@@ -129,11 +129,17 @@ draw_pass_1 = SubResource("SphereMesh_orbital")
 
 [node name="RingA" type="Node3D" parent="."]
 
+[node name="Wisp1" type="MeshInstance3D" parent="RingA"]
+
 [node name="Plate1" type="MeshInstance3D" parent="RingA"]
 
 [node name="GlassAccentA" type="MeshInstance3D" parent="RingA/Plate1"]
 
+[node name="Wisp3" type="MeshInstance3D" parent="RingA/Plate1/GlassAccentA"]
+
 [node name="Plate3" type="MeshInstance3D" parent="RingA"]
+
+[node name="Wisp2" type="MeshInstance3D" parent="RingA/Plate3"]
 
 [node name="RingB" type="Node3D" parent="."]
 
@@ -144,15 +150,6 @@ draw_pass_1 = SubResource("SphereMesh_orbital")
 [node name="ArcA" type="MeshInstance3D" parent="."]
 
 [node name="ArcB" type="MeshInstance3D" parent="."]
-
-[node name="Wisp1" type="MeshInstance3D" parent="."]
-visible = false
-
-[node name="Wisp2" type="MeshInstance3D" parent="."]
-visible = false
-
-[node name="Wisp3" type="MeshInstance3D" parent="."]
-visible = false
 
 [node name="UI" type="CanvasLayer" parent="."]
 

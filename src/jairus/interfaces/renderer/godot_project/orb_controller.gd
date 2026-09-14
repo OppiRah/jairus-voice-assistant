@@ -608,28 +608,69 @@ const ORBITAL_EMISSION_ENERGY := 3.0  # dimmer than a core spark, closer to a ri
 # asset, no hard sprite edge) PLUS noise-driven irregularity together (not
 # either alone) is what produces that read rather than a plain glow dot.
 #
-# Three wisps, deliberately positioned (design doc's own "controlled
-# asymmetry" -- not evenly spaced, same discipline as PLATE_CONFIGS/
-# RING_A_SEGMENTS), straddling RingA/RingB's own 1.3-1.7 band, bridging
-# outward past it into the darker exterior -- not randomly floating, per the
-# reference doc's explicit distinction. Radius placement was tuned by real
-# screenshot, not guessed: an initial placement closer to CoreHousing
-# (radius ~0.8-1.35) rendered with genuinely bright pixels (confirmed via
-# unproject_position + direct pixel sampling) but was visually swallowed by
-# the already-bright core/inner-ring bloom -- an additive glow needs a
-# comparatively DARK local background to read as a distinct shape, which the
-# region just past the ring band actually has. Each wisp orbits the core at
-# its own fixed radius/height (own base_speed, own direction/rate) so it
-# reads as energy actually moving around the physical artifact, not a static
-# decal; per-state wisp_speed (STATE_PROFILES) scales this same orbit on top
-# of each wisp's own structural base_speed -- identical "structural constant
-# + per-state multiplier" split already used everywhere else in this file
-# (segments, glass shells, particles).
+# V2-4 (ORB_V2_DESIGN.md Q6/Q11/Q14): the original 3 wisps orbited the core
+# at their own independent fixed radius/height, sharing only the origin with
+# every other element -- Q6's own diagnosis: "the wisps' generic 'soft glow
+# patch' read was partly a consequence of them not being tied to anything
+# specific to look like they belong to," and Q14 accordingly calls for
+# discarding "the freely-orbiting placement in favor of structure-anchored
+# junctions" while keeping the billboard shader technique itself verbatim
+# (Q11: "now anchored per Q6 rather than freely orbiting" -- the shader was
+# never the problem). Q6's own named examples: "a ring segment's gap, or a
+# strut's connection point... read as energy leaking or arcing at a
+# mechanical seam." Same anchoring principle V2-1/V2-2/V2-3 each already
+# confirmed necessary: each wisp below is now a CHILD of a real, existing
+# structural node (see orb_scene.tscn) instead of an independent world-space
+# radius/angle, inheriting that parent's own motion automatically -- no
+# per-frame orbit code needed at all (the old base_speed/_wisp_angles orbit
+# is removed entirely; the shader's own animated noise scroll, unaffected,
+# already supplies the "alive" feel independent of the quad's position).
+# Three distinct junction types, not the same spot three times:
 const WISP_CONFIGS := [
-	{"angle_deg": 90.0, "radius": 1.6, "height": 0.4, "quad_size": 0.7, "base_speed": 0.22, "render_priority": 1},
-	{"angle_deg": 245.0, "radius": 1.85, "height": -0.2, "quad_size": 0.9, "base_speed": -0.15, "render_priority": 2},
-	{"angle_deg": 330.0, "radius": 1.45, "height": -0.5, "quad_size": 0.6, "base_speed": 0.3, "render_priority": 1},
+	{
+		# Wisp1 -- child of RingA itself (Q6's "a ring segment's gap"),
+		# positioned in RingA's own local plane exactly like plates/ring
+		# segments (Vector3(cos*r, sin*r, height)) at the real ~40-degree
+		# gap between RING_A_SEGMENTS[3] (ends at 360/0 deg) and
+		# RING_A_SEGMENTS[0] (starts at 40 deg) -- an actual empty span in
+		# the ring geometry, verified against RING_A_SEGMENTS above, not a
+		# guessed angle. Chosen over the (also real) 185-220 gap because
+		# it's far in angle from both Plate1 (110 deg) and Plate3 (220
+		# deg) -- a first attempt at 202 deg sat only 18 degrees from
+		# Plate3's own junction and a real screenshot showed the two
+		# wisps merging into one indistinct blob rather than reading as
+		# separate. radius=1.55 (just past RING_A_OUTER_RADIUS=1.45, not
+		# inside the band itself) reuses the ORIGINAL wisp pass's own
+		# empirical finding, preserved below at WISP_EMISSION_ENERGY's
+		# comment: additive glow needs a comparatively dark local
+		# background to read as a distinct shape, which just past the
+		# band has and the band's own bright pixels don't.
+		"angle_deg": 20.0, "radius": 1.55, "height": 0.15, "quad_size": 0.4,
+	},
+	{
+		# Wisp2 -- child of RingA/Plate3 (Q6's "a strut's connection
+		# point"): the one strut V2-2/V2-3 left otherwise bare (Plate1
+		# anchors GlassAccentA and one ArcA endpoint; Plate2 anchors
+		# GlassAccentB and ArcA's other endpoint) -- a genuinely unused
+		# junction, not a repeat of an already-decorated one. Offset
+		# increased from an initial (0.2, 0.15, 0.2) after a real
+		# screenshot showed that magnitude still overlapping the strut's
+		# own bright surroundings; pushed further out and shrunk
+		# (quad_size) so it clears into darker space instead of adding to
+		# the same merged blob Wisp1's fix above also addresses.
+		"local_offset": Vector3(0.4, 0.3, 0.35), "quad_size": 0.35,
+	},
+	{
+		# Wisp3 -- child of RingA/Plate1/GlassAccentA (this pass's own
+		# third junction type, alongside Q6's two named examples: energy
+		# at a glass accent's edge). Offset increased past the accent's
+		# own ellipsoid surface (scale ~0.38/0.3/0.34) for the same
+		# real-screenshot reason as Wisp2 -- clears the accent's glow
+		# instead of merging into it.
+		"local_offset": Vector3(0.5, 0.35, 0.2), "quad_size": 0.4,
+	},
 ]
+const WISP_RENDER_PRIORITY := 1  # additive (blend_add) billboards -- unlike alpha-blended glass/rings, additive blending is order-independent, so one shared priority is enough; no per-wisp value needed
 const WISP_SOFTNESS := 0.35  # lower than the PoC's 0.5 -- a fully soft/gaussian falloff reads as haze; a tighter edge (combined with the smoothstep-sharpened noise below) keeps the shape reading as a torn energy patch instead
 const WISP_NOISE_SPEED_BASE := 0.35  # noise scroll rate at wisp_speed=1.0 -- see orb_energy_wisp.gdshader's noise_speed uniform
 # NOT the PoC's frequency=0.15, verbatim -- retuned after real screenshots
@@ -853,7 +894,7 @@ const STATE_PROFILES := {
 @onready var core_housing: MeshInstance3D = $CoreHousing
 @onready var core_emblem: MeshInstance3D = $CoreEmblem
 @onready var plates: Array[MeshInstance3D] = [$RingA/Plate1, $RingB/Plate2, $RingA/Plate3]
-@onready var wisps: Array[MeshInstance3D] = [$Wisp1, $Wisp2, $Wisp3]
+@onready var wisps: Array[MeshInstance3D] = [$RingA/Wisp1, $RingA/Plate3/Wisp2, $RingA/Plate1/GlassAccentA/Wisp3]
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -882,7 +923,6 @@ var _core_spark_process_material: ParticleProcessMaterial
 var _orbital_material: StandardMaterial3D
 var _orbital_process_material: ParticleProcessMaterial
 var _wisp_materials: Array[ShaderMaterial] = []
-var _wisp_angles: Array[float] = []  # accumulated orbit angle (radians) per wisp, updated each frame in _update_wisps()
 
 
 func _ready() -> void:
@@ -1023,6 +1063,13 @@ func _ready() -> void:
 	# Pass F -- billboard energy wisps. Each gets its own NoiseTexture2D
 	# instance (not a single shared texture) so their noise phases don't all
 	# scroll in visible lockstep, same reasoning as ArcA/ArcB's seed_offset.
+	# V2-4: position is set once here and never touched again -- each wisp
+	# is now a child of a real structural node (see WISP_CONFIGS/orb_scene.
+	# tscn), so it automatically inherits that parent's own live motion;
+	# there is no more per-frame orbit to update (contrast the plates,
+	# which keep an independent LOCAL spin on top of being anchored -- a
+	# wisp's "alive" quality already comes entirely from the shader's own
+	# animated noise scroll, not from moving the quad itself).
 	for i in range(wisps.size()):
 		var wisp := wisps[i]
 		var config: Dictionary = WISP_CONFIGS[i]
@@ -1032,14 +1079,22 @@ func _ready() -> void:
 		quad.size = Vector2(quad_size, quad_size)
 		wisp.mesh = quad
 
-		var angle: float = deg_to_rad(config["angle_deg"])
-		var radius: float = config["radius"]
-		wisp.position = Vector3(cos(angle) * radius, config["height"], sin(angle) * radius)
-		_wisp_angles.append(angle)
+		if config.has("angle_deg"):
+			# Ring-local placement -- same Vector3(cos*r, sin*r, height)
+			# convention _build_ring_segment_mesh()/PLATE_CONFIGS already
+			# use for a node positioned in its parent ring's own local
+			# plane (see WISP_CONFIGS' own comment for Wisp1).
+			var angle: float = deg_to_rad(config["angle_deg"])
+			var radius: float = config["radius"]
+			wisp.position = Vector3(cos(angle) * radius, sin(angle) * radius, config["height"])
+		else:
+			# Small offset from a non-ring parent (a strut or glass accent)
+			# -- its own local space, not the ring-plane convention above.
+			wisp.position = config["local_offset"]
 
 		var wisp_mat := ShaderMaterial.new()
 		wisp_mat.shader = WISP_SHADER
-		wisp_mat.render_priority = config["render_priority"]
+		wisp_mat.render_priority = WISP_RENDER_PRIORITY
 		wisp_mat.set_shader_parameter("softness", WISP_SOFTNESS)
 		wisp_mat.set_shader_parameter("use_noise", 1.0)
 		wisp_mat.set_shader_parameter("noise_tex", _make_noise_texture(WISP_NOISE_FREQUENCY))
@@ -1423,7 +1478,7 @@ func _process(delta: float) -> void:
 	_update_plates(delta, profile)
 	_update_core_sparks(profile)
 	_update_orbital_particles(profile)
-	_update_wisps(delta, profile)
+	_update_wisps(profile)
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -1599,28 +1654,22 @@ func _update_orbital_particles(profile: Dictionary) -> void:
 	_orbital_material.emission_energy_multiplier = ORBITAL_EMISSION_ENERGY
 
 
-## Pass F: each wisp orbits the core at its own fixed radius/height (own
-## structural base_speed from WISP_CONFIGS), scaled by the current state's
-## wisp_speed -- so at wisp_speed=1.0 a wisp moves at exactly its own
-## structural rate, same "structural constant + per-state multiplier" split
-## already used for ring segments/glass shells/particles. base_color ties to
+## V2-4: no more per-frame position update -- each wisp is a child of a real
+## structural node (WISP_CONFIGS/orb_scene.tscn) and inherits that parent's
+## own live motion automatically, the same anchoring principle V2-1/V2-2/
+## V2-3 already established. Only the shader parameters vary per frame/
+## state now: wisp_speed drives noise_speed (the energy churns faster/
+## slower at the junction) instead of an orbital rate, exactly the same
+## STATE_PROFILES field doing a different, arguably more fitting job for an
+## anchored wisp -- no new per-state fields were needed. base_color ties to
 ## _current_color (like every other energy element) so wisps participate in
 ## the state color story rather than reading as a fixed, state-blind layer.
-func _update_wisps(delta: float, profile: Dictionary) -> void:
+func _update_wisps(profile: Dictionary) -> void:
 	var wisp_intensity: float = profile.get("wisp_intensity", 0.5)
 	var wisp_speed: float = profile.get("wisp_speed", 0.5)
 	var wisp_opacity: float = profile.get("wisp_opacity", 0.5)
 
 	for i in range(wisps.size()):
-		var config: Dictionary = WISP_CONFIGS[i]
-		var base_speed: float = config["base_speed"]
-		_wisp_angles[i] += base_speed * wisp_speed * delta
-
-		var radius: float = config["radius"]
-		wisps[i].position = Vector3(
-			cos(_wisp_angles[i]) * radius, config["height"], sin(_wisp_angles[i]) * radius
-		)
-
 		var mat := _wisp_materials[i]
 		mat.set_shader_parameter("base_color", _current_color)
 		mat.set_shader_parameter("intensity", WISP_EMISSION_ENERGY * wisp_intensity)
