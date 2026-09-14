@@ -68,6 +68,14 @@ extends Node3D
 ## trails (mentioned as optional in both the design doc and the gap
 ## analysis) were investigated and deliberately not built this pass --
 ## see this pass's own report for why.
+##
+## Pass E (particle roles) -- adds CoreSparks and OrbitalParticles, two new
+## GPUParticles3D nodes alongside the untouched AmbientParticles (which now
+## explicitly serves design-doc section 9's "ambient" role). See the
+## comment above EMBLEM_Z_OFFSET's constants block for the full reasoning,
+## including why "energy particles" riding the arcs are deliberately not a
+## third new role this pass (Pass B's own ribbon-particle decision, carried
+## forward unchanged).
 
 const WS_URL := "ws://localhost:8767"
 
@@ -332,9 +340,11 @@ const GLASS_SHELL_CONFIGS := [
 # enough) the same center -- exactly this scene's shape now that there are
 # 4 more concentric objects than before.
 const RENDER_PRIORITY_CORE_HOUSING := -8  # innermost transparent object in the scene (radius 0.64, smaller than the arcs' 0.75) -- drawn first, per the same "innermost first" convention as everything below
+const RENDER_PRIORITY_CORE_SPARKS := -7  # emitted right at CoreHousing's 0.64 boundary (0.68 emission radius) -- between the housing and the arcs (0.75), same "innermost first" ordering
 const RENDER_PRIORITY_ARCS := -6
 const RENDER_PRIORITY_PARTICLES := -2
 const RENDER_PRIORITY_RING_A := 0
+const RENDER_PRIORITY_ORBITAL := 0  # emission_ring_radius 1.5 sits between RingA's 1.3-1.45 band and RingB's 1.55-1.7 band -- same approximate-priority caveat as RENDER_PRIORITY_PARTICLES above, since orbiting particles don't hold a single exact radius either
 const RENDER_PRIORITY_RING_B := 1
 
 # CoreHousing reuses GLASS_SHELL_SHADER (same Fresnel technique as the 4
@@ -363,6 +373,49 @@ const EMBLEM_INNER_RADIUS := 0.09
 const EMBLEM_POINTS := 4
 const EMBLEM_Z_OFFSET := 0.53
 
+# Pass E -- two new particle roles (design-doc section 9: "core sparks" and
+# "orbital particles" are distinct behavioral roles, not more ambient
+# density). AmbientParticles itself is untouched and now explicitly serves
+# section 9's "ambient" role. "Energy particles" (riding the arcs) are
+# deliberately NOT added this pass -- Pass B's own report investigated
+# ribbon-riding particles and concluded the arc shader's traveling-
+# brightness wave already covers that need, and the person has since
+# confirmed Pass B "feels as intended, no follow-up needed." That decision
+# is carried forward here, not re-litigated.
+#
+# CoreSparks: emitted from a small sphere shell just outside CoreHousing's
+# own 0.64 radius (see SphereMesh_core_housing in orb_scene.tscn), with
+# real velocity (0.9-1.6, vs. AmbientParticles' 0.05-0.2) and a short
+# lifetime (0.45s) so they read as "spitting off the energy source" and
+# fade before reaching the rings' 1.3+ band -- never floating debris.
+# Structural placement/velocity/lifetime live in orb_scene.tscn's
+# ParticleProcessMaterial_core_sparks (a one-time setup, same as
+# AmbientParticles' own process material); only rate/speed/size react to
+# state, via the per-state fields below and _core_spark_process_material's
+# scale_min/scale_max (mutated at runtime, same "structural constant +
+# per-state multiplier" split already used for the glass shells/plates).
+const CORE_SPARK_SCALE_MIN := 0.6  # matches ParticleProcessMaterial_core_sparks' own baseline -- kept here too since state's core_spark_size multiplies it at runtime
+const CORE_SPARK_SCALE_MAX := 1.3
+const CORE_SPARK_EMISSION_ENERGY := 5.0  # brighter than a single ambient mote (EMISSION_ENERGY=3.5) since sparks are meant to read as "energy," but well under the core's own CORE_GLOW_EMISSION_ENERGY=6.0 -- never competing with the actual core for the hierarchy's top spot
+const CORE_SPARK_BRIGHTEN := 0.6  # lerp weight toward Color.WHITE, same legibility technique as the emblem/activity label -- keeps sparks reading as sharp bright motes rather than same-hue-as-everything-else glow
+
+# OrbitalParticles: emission_ring_radius 1.5 (orb_scene.tscn's
+# ParticleProcessMaterial_orbital) sits between RingA's 1.3-1.45 band and
+# RingB's 1.55-1.7 band -- close enough to read as riding along with the
+# rings, not a separate unrelated layer. The node is tilted by the same
+# RING_TILT_DEG as RingA/RingB in _ready() (not hand-duplicated math) so
+# its ring-shaped emission plane matches the rings' own plane; Godot's
+# orbit_velocity rotates particles around the emitting node's own local Z
+# axis, and emission_ring_axis is already set to that same local Z in the
+# .tscn resource, so the tilt carries both into alignment together.
+# orbit_velocity_min/max (0.06-0.09 full rotations/sec structurally) is
+# deliberately slow at baseline -- orbital_speed below scales it per state,
+# same "structural baseline + per-state multiplier" split as everywhere
+# else in this file.
+const ORBITAL_SCALE_MIN := 0.7
+const ORBITAL_SCALE_MAX := 1.2
+const ORBITAL_EMISSION_ENERGY := 3.0  # dimmer than a core spark, closer to a ring's own emission (EMISSION_ENERGY*0.6=2.1) -- orbital particles are meant to read as riding along with the rings, not out-competing them
+
 # One row per real AssistantStatus value -- every value that makes a
 # state FEEL different, not just a different color, lives here as a
 # single named table rather than scattered through _process()'s logic,
@@ -386,6 +439,14 @@ const EMBLEM_Z_OFFSET := 0.53
 # even across two independent rendering surfaces. waiting_confirmation
 # has no Python-side color to borrow (theme.py deliberately omits one,
 # since it never fires there either) so it gets a new, distinct amber.
+#
+# Pass E adds core_spark_rate/speed/size and orbital_rate/speed/size --
+# core sparks generally track plate_activity/arc_intensity's own per-state
+# shape (calm at idle/offline, peaking at error, since both are meant to
+# read as "the energy source getting more agitated"); orbital_speed
+# generally tracks ring_speed's own shape (the orbital particles are meant
+# to read as riding along with the rings, so their speed story should
+# match, not diverge from, the rings' own).
 const STATE_PROFILES := {
 	"idle": {
 		"color": Color(70.0 / 255.0, 130.0 / 255.0, 200.0 / 255.0),
@@ -399,6 +460,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.35,
 		"plate_activity": 0.3,
 		"arc_turbulence": 0.25,
+		"core_spark_rate": 0.25, "core_spark_speed": 1.0, "core_spark_size": 1.0,
+		"orbital_rate": 0.3, "orbital_speed": 1.0, "orbital_size": 1.0,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -412,6 +475,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.45,
 		"plate_activity": 0.4,
 		"arc_turbulence": 0.3,
+		"core_spark_rate": 0.3, "core_spark_speed": 1.05, "core_spark_size": 1.0,
+		"orbital_rate": 0.35, "orbital_speed": 1.15, "orbital_size": 1.0,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -425,6 +490,8 @@ const STATE_PROFILES := {
 		"segment_spread": 1.0,
 		"plate_activity": 0.8,
 		"arc_turbulence": 0.6,
+		"core_spark_rate": 0.5, "core_spark_speed": 1.4, "core_spark_size": 1.05,
+		"orbital_rate": 0.5, "orbital_speed": 1.8, "orbital_size": 1.05,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -438,6 +505,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.5,
 		"plate_activity": 0.4,
 		"arc_turbulence": 0.35,
+		"core_spark_rate": 0.35, "core_spark_speed": 1.15, "core_spark_size": 1.0,
+		"orbital_rate": 0.35, "orbital_speed": 1.2, "orbital_size": 1.0,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -451,6 +520,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.7,
 		"plate_activity": 0.6,
 		"arc_turbulence": 0.45,
+		"core_spark_rate": 0.65, "core_spark_speed": 1.6, "core_spark_size": 1.1,
+		"orbital_rate": 0.55, "orbital_speed": 1.6, "orbital_size": 1.05,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -464,6 +535,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.5,
 		"plate_activity": 0.35,
 		"arc_turbulence": 0.3,
+		"core_spark_rate": 0.5, "core_spark_speed": 1.0, "core_spark_size": 1.1,
+		"orbital_rate": 0.4, "orbital_speed": 1.1, "orbital_size": 1.0,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -477,6 +550,8 @@ const STATE_PROFILES := {
 		"segment_spread": 1.2,
 		"plate_activity": 1.0,
 		"arc_turbulence": 0.85,
+		"core_spark_rate": 0.85, "core_spark_speed": 2.0, "core_spark_size": 1.15,
+		"orbital_rate": 0.6, "orbital_speed": 2.2, "orbital_size": 1.1,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -490,6 +565,8 @@ const STATE_PROFILES := {
 		"segment_spread": 0.05,
 		"plate_activity": 0.02,
 		"arc_turbulence": 0.1,
+		"core_spark_rate": 0.03, "core_spark_speed": 0.2, "core_spark_size": 0.8,
+		"orbital_rate": 0.05, "orbital_speed": 0.1, "orbital_size": 0.8,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -503,11 +580,15 @@ const STATE_PROFILES := {
 		"segment_spread": 0.5,
 		"plate_activity": 0.35,
 		"arc_turbulence": 0.35,
+		"core_spark_rate": 0.35, "core_spark_speed": 1.0, "core_spark_size": 1.0,
+		"orbital_rate": 0.3, "orbital_speed": 0.9, "orbital_size": 1.0,
 	},
 }
 
 @onready var core: MeshInstance3D = $Core
 @onready var particles: GPUParticles3D = $AmbientParticles
+@onready var core_sparks: GPUParticles3D = $CoreSparks
+@onready var orbital_particles: GPUParticles3D = $OrbitalParticles
 @onready var world_environment: WorldEnvironment = $WorldEnvironment
 @onready var ring_a: Node3D = $RingA  # Pass B: container for segments, not a single mesh anymore -- see RING_A_SEGMENTS
 @onready var ring_b: Node3D = $RingB
@@ -541,6 +622,10 @@ var _housing_material: ShaderMaterial
 var _emblem_material: StandardMaterial3D
 var _ring_segments_a: Array[MeshInstance3D] = []
 var _ring_segments_b: Array[MeshInstance3D] = []
+var _core_spark_material: StandardMaterial3D
+var _core_spark_process_material: ParticleProcessMaterial
+var _orbital_material: StandardMaterial3D
+var _orbital_process_material: ParticleProcessMaterial
 
 
 func _ready() -> void:
@@ -584,6 +669,31 @@ func _ready() -> void:
 	_particle_material = _make_translucent_material()
 	_particle_material.render_priority = RENDER_PRIORITY_PARTICLES
 	particles.material_override = _particle_material
+
+	# Pass E -- CoreSparks and OrbitalParticles, section 9's two most
+	# concrete particle roles (see this pass's own comment above
+	# EMBLEM_Z_OFFSET for why "energy particles" riding the arcs are
+	# deliberately not a third new role here). Both reuse the exact
+	# material_override pattern AmbientParticles already established above
+	# -- same emissive/unshaded material family, just two more instances --
+	# and each keeps its own ParticleProcessMaterial reference so state can
+	# mutate scale_min/scale_max at runtime (orb_scene.tscn only sets their
+	# structural baseline once).
+	_core_spark_material = _make_translucent_material()
+	_core_spark_material.render_priority = RENDER_PRIORITY_CORE_SPARKS
+	core_sparks.material_override = _core_spark_material
+	_core_spark_process_material = core_sparks.process_material as ParticleProcessMaterial
+
+	_orbital_material = _make_translucent_material()
+	_orbital_material.render_priority = RENDER_PRIORITY_ORBITAL
+	orbital_particles.material_override = _orbital_material
+	_orbital_process_material = orbital_particles.process_material as ParticleProcessMaterial
+	# Tilts the orbital ring-emission plane (local XY, per
+	# ParticleProcessMaterial_orbital's emission_ring_axis) to match
+	# RingA/RingB's own plane -- same RING_TILT_DEG reused, not a new
+	# hand-picked angle. orbit_velocity rotates around the node's own local
+	# Z axis, which this tilt carries along with the emission plane.
+	orbital_particles.rotate_x(deg_to_rad(RING_TILT_DEG))
 
 	_ring_material_a = _make_translucent_material()
 	_ring_material_a.render_priority = RENDER_PRIORITY_RING_A
@@ -648,10 +758,11 @@ func _ready() -> void:
 		shell.set_surface_override_material(0, mat)
 		_glass_materials.append(mat)
 
-	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d" % [
+	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d, core sparks=%d, orbital particles=%d" % [
 		_ring_segments_a.size(), _ring_segments_b.size(), plates.size(),
 		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
 		EMBLEM_POINTS, core_emblem.mesh.surface_get_array_len(0),
+		core_sparks.amount, orbital_particles.amount,
 	])
 
 	var err := _socket.connect_to_url(WS_URL)
@@ -867,6 +978,8 @@ func _process(delta: float) -> void:
 	_update_glass_shells(profile)
 	_update_core_housing()
 	_update_plates(delta, profile)
+	_update_core_sparks(profile)
+	_update_orbital_particles(profile)
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -980,6 +1093,46 @@ func _update_plates(delta: float, profile: Dictionary) -> void:
 	for i in range(plates.size()):
 		var per_plate_rate := PLATE_SPIN_SPEED * (0.7 + 0.3 * float(i))  # mild per-plate variety, deterministic, same spirit as the arcs' seed_offset
 		plates[i].rotate_object_local(Vector3.UP, per_plate_rate * activity * delta)
+
+
+## Pass E: CoreSparks read as "energy spitting off the source" -- rate
+## (amount_ratio) and speed (speed_scale) follow the exact same knobs
+## AmbientParticles already uses, just on a second, independently-tuned
+## particle system; size additionally scales _core_spark_process_material's
+## scale_min/scale_max at runtime (CORE_SPARK_SCALE_MIN/MAX are the
+## structural baseline, core_spark_size is the per-state multiplier -- same
+## split as the glass shells' power_offset+rim_intensity).
+func _update_core_sparks(profile: Dictionary) -> void:
+	var rate: float = profile.get("core_spark_rate", 0.3)
+	var speed: float = profile.get("core_spark_speed", 1.0)
+	var size: float = profile.get("core_spark_size", 1.0)
+	core_sparks.amount_ratio = rate
+	core_sparks.speed_scale = speed
+	_core_spark_process_material.scale_min = CORE_SPARK_SCALE_MIN * size
+	_core_spark_process_material.scale_max = CORE_SPARK_SCALE_MAX * size
+	var spark_color := _current_color.lerp(Color.WHITE, CORE_SPARK_BRIGHTEN)
+	_core_spark_material.albedo_color = spark_color
+	_core_spark_material.emission = spark_color
+	_core_spark_material.emission_energy_multiplier = CORE_SPARK_EMISSION_ENERGY
+
+
+## Pass E: OrbitalParticles read as "riding along with the rings" -- rate/
+## speed/size follow the same pattern as _update_core_sparks() above.
+## speed_scale here also scales orbit_velocity_min/max (Godot applies
+## speed_scale to the whole particle simulation, orbit included), so
+## orbital_speed genuinely changes how fast particles circle the orb, not
+## just how fast they're emitted.
+func _update_orbital_particles(profile: Dictionary) -> void:
+	var rate: float = profile.get("orbital_rate", 0.3)
+	var speed: float = profile.get("orbital_speed", 1.0)
+	var size: float = profile.get("orbital_size", 1.0)
+	orbital_particles.amount_ratio = rate
+	orbital_particles.speed_scale = speed
+	_orbital_process_material.scale_min = ORBITAL_SCALE_MIN * size
+	_orbital_process_material.scale_max = ORBITAL_SCALE_MAX * size
+	_orbital_material.albedo_color = _current_color
+	_orbital_material.emission = _current_color
+	_orbital_material.emission_energy_multiplier = ORBITAL_EMISSION_ENERGY
 
 
 func _compute_breathe(pulse_speed: float, irregular: bool) -> float:
