@@ -384,74 +384,96 @@ const ACTIVITY_FADE_SECONDS := 0.25   # each half of the fade-out/swap/fade-in t
 
 const GLASS_SHELL_SHADER := preload("res://orb_glass_shell.gdshader")
 
-# Full Fresnel glass + layered depth pass: 4 concentric, non-uniformly-
-# scaled (ellipsoid, not perfect-sphere -- a plain sphere looks identical
-# under any rotation, so an ellipsoid is what actually makes "varying
-# rotations/tilts" visible) glass shells around the core, reusing the
-# Fresnel rim-lighting technique validated in glass_poc_fresnel.gdshader
-# (ORB_RENDERER_INVESTIGATION.md section 9). power_offset/rim_offset/tint
-# are per-shell STRUCTURAL differences (so the 4 shells read as distinct
-# layers even in the same state); STATE_PROFILES' glass_rim_intensity/
-# glass_lens_strength below are the per-STATE behavior layered on top of
-# these, same "structural constant + state-driven multiplier" split
-# already used for rings (RING_TILT_DEG is structural; ring_speed/
-# ring_opacity are per-state). power_offset increases outward (innermost
-# shell has the broadest/softest rim, outermost the sharpest/brightest) so
-# the 4 layers read as "energy building outward," echoing the concept
-# image's layered-depth feel.
-const GLASS_BASE_FRESNEL_POWER := 3.0
-const GLASS_BASE_RIM_ALPHA := 0.65
-const GLASS_CORE_ALPHA := 0.06  # near-invisible body so the core/rings stay the visual focus, not the glass itself
-const GLASS_LENS_DISTORTION_BASE := 0.05  # deliberately subtle -- see orb_glass_shell.gdshader's own comment on what this can and can't show
+# V2-2 -- asymmetric glass/crystal accents (ORB_V2_DESIGN.md Q5/Q14),
+# replacing the old 4-shell uniform-concentric system entirely (discarded,
+# not tuned further). The project's own prior code comments already
+# self-diagnosed that system's exact failure ("4 equally bright concentric
+# shells inherently read as 4 equally-visible nested rings, not glass
+# depth"), and Q4's silhouette test predicted its GLASS_CORE_ALPHA=0.06
+# left no non-emissive silhouette at all -- confirmed, not just predicted,
+# by this pass's own bloom-off screenshot (see this pass's report). The
+# Fresnel shader TECHNIQUE was never the problem (Q8/Q11: kept, reused
+# verbatim -- same GLASS_SHELL_SHADER file CoreHousing already uses) --
+# only the uniform/concentric/independently-positioned APPLICATION was.
+#
+# Per Q3/Q14, applying the exact lesson V2-1's struts just proved the hard
+# way: an element parameterized only by its own radius/angle/height around
+# the shared origin reads as "technically present, doesn't read" even with
+# correct geometry/material. So neither accent below has its own
+# independent world-space placement at all -- each is a CHILD of an
+# existing V2-1 strut (GlassAccentA under RingA/Plate1, GlassAccentB under
+# RingB/Plate2 -- see orb_scene.tscn), inheriting that strut's ring
+# rotation and per-plate spin automatically, with zero new per-frame
+# position code. Anchoring one accent per ring (not two on the same ring)
+# also means the two sit at genuinely different depths/tilts by
+# construction, since RingA/RingB already have independent tilt axes
+# (V2-1) -- the "distinct depth layers" this pass's stage 1 test checks
+# for, not an assumed side effect.
+#
+# Construction technique -- built and verified, not assumed: Q11 offers
+# "Ellipsoid OR crystal-shard mesh" for this element. Crystal-shard
+# (_build_crystal_shard(), reused for the plates/struts) was tried first
+# since Q11's own text leans toward it for "genuine faceted depth" -- but
+# this pass's own stage-1 screenshot caught a real problem the plates never
+# hit: _build_crystal_shard() assigns one FLAT normal per face, so under
+# this Fresnel shader a whole facet that happens to face edge-on to the
+# camera lights up at uniformly high fresnel/emission across its entire
+# area (not just a thin rim the way a smooth sphere's continuously-varying
+# normal produces) -- a large, near-white flat plane that blooms out into
+# exactly the kind of massive screen-covering haze a real screenshot caught
+# and a synthetic test would not have. This never affected the plates
+# because they use real-lit StandardMaterial3D, not this unshaded Fresnel
+# shader. Switched to Q11's other named option instead: an ELLIPSOID
+# (SphereMesh, non-uniformly scaled -- exactly CoreHousing's and the old
+# shells' own proven-safe construction, per this same file's Pass A/original
+# comments on why an ellipsoid, not a perfect sphere, is what makes tilt
+# visible) built directly in code per accent, "scale" replacing equator_
+# radius/half_height/sides below. Deliberately different scales/alphas
+# (Q5: "varied in scale, not just position"): Accent A larger and more
+# opaque, the nearer/more prominent layer; Accent B smaller and dimmer, the
+# further/subtler one. core_alpha values are well above the old system's
+# failed 0.06, verified against the silhouette test (Q4) below, not
+# asserted.
+const GLASS_ACCENT_BASE_FRESNEL_POWER := 3.0
+const GLASS_ACCENT_BASE_RIM_ALPHA := 0.75
+const GLASS_ACCENT_LENS_DISTORTION_BASE := 0.05  # same deliberately-subtle baseline the old shells used -- see orb_glass_shell.gdshader's own comment on what this can and can't show
+const GLASS_ACCENT_BASE_COLOR := Color(0.65, 0.78, 1.0)  # pale glass-blue, same palette family the old shells used
 
-# Sizing/visibility note (revised after two real screenshots): attempt 1
-# spread the 4 shells from radius 0.85 to 1.85, directly overlapping
-# RingA/RingB's own 1.3-1.7 band -- read as a muddy stack of extra "rings"
-# competing with the actual rings. Attempt 2 clustered them at 0.8-1.2
-# (safely under RingA's 1.3 inner radius), which fixed that, but a
-# Fresnel-lit sphere always brightens its own silhouette edge -- 4 equally
-# bright concentric shells inherently read as 4 equally-visible nested
-# rings, not "glass depth" (an intrinsic property of the technique on a
-# static front view, not a tunable bug). This third pass keeps the same
-# sizing but makes the inner two shells deliberately much dimmer (soft
-# ambient haze around the core, barely visible on their own) so only the
-# outer two read as distinct glass edges -- fewer equally-weighted rings,
-# more "soft glow building outward to a visible edge."
-const GLASS_SHELL_CONFIGS := [
+const GLASS_ACCENT_CONFIGS := [
 	{
-		"scale": Vector3(0.8, 0.77, 0.8), "tilt_x_deg": 10.0, "tilt_z_deg": 0.0,
-		"power_offset": -1.0, "rim_offset": -0.42, "tint": Color(0.02, 0.0, -0.02),
-		"render_priority": -5,
+		# Accent A -- child of RingA/Plate1 (the strut V2-1 anchored at
+		# RingA segment 0's far endpoint). local_offset/rotation_deg are in
+		# Plate1's own local space. Larger + more opaque: the nearer, more
+		# prominent accent.
+		"local_offset": Vector3(0.25, 0.2, 0.15), "rotation_deg": Vector3(15.0, -30.0, 10.0),
+		"scale": Vector3(0.38, 0.3, 0.34),
+		"power_offset": -0.5, "rim_offset": 0.05, "core_alpha": 0.32,
+		"render_priority": 0,
 	},
 	{
-		"scale": Vector3(0.93, 0.89, 0.91), "tilt_x_deg": 25.0, "tilt_z_deg": 40.0,
-		"power_offset": -0.4, "rim_offset": -0.30, "tint": Color(0.0, 0.02, 0.02),
-		"render_priority": -4,
-	},
-	{
-		"scale": Vector3(1.07, 1.02, 1.05), "tilt_x_deg": 40.0, "tilt_z_deg": 90.0,
-		"power_offset": 0.3, "rim_offset": -0.02, "tint": Color(-0.02, 0.0, 0.03),
-		"render_priority": -3,
-	},
-	{
-		"scale": Vector3(1.2, 1.13, 1.17), "tilt_x_deg": 55.0, "tilt_z_deg": 140.0,
-		"power_offset": 0.9, "rim_offset": 0.05, "tint": Color(0.03, -0.01, 0.02),
-		"render_priority": -1,
+		# Accent B -- child of RingB/Plate2 (RingB segment 1's far
+		# endpoint) -- a different ring than Accent A, with RingB's own
+		# independent tilt (V2-1), so this sits at a genuinely different
+		# depth/orientation, not a second copy of Accent A's layer. Smaller
+		# + dimmer: the further, subtler accent.
+		"local_offset": Vector3(-0.18, -0.14, 0.1), "rotation_deg": Vector3(-25.0, 40.0, -15.0),
+		"scale": Vector3(0.2, 0.16, 0.18),
+		"power_offset": 0.5, "rim_offset": -0.15, "core_alpha": 0.2,
+		"render_priority": 1,
 	},
 ]
 
 # render_priority for every OTHER layered-transparent element, chosen to
-# match their real radial position relative to the 4 glass shells above
+# match their real radial position relative to the 2 glass accents above
 # (arcs at radius 0.75, particles scattered around ~1.1 on average --
 # approximate, since particles actually move outward over their lifetime,
 # so a single static priority can only ever be a reasonable estimate --
-# RingA at inner/outer 1.3/1.45, RingB at 1.55/1.7) so the combined draw
-# order is consistently "innermost first, outermost last" across every
-# transparent object in the scene, not just within the glass shells
-# themselves. This is the investigation's named mitigation for AABB-based
-# sorting being unreliable when multiple transparent objects share (near
-# enough) the same center -- exactly this scene's shape now that there are
-# 4 more concentric objects than before.
+# RingA at inner/outer 1.3/1.45, RingB at 1.55/1.7, and the accents sit at
+# their parent strut's own radius) so the combined draw order is
+# consistently "innermost first, outermost last" across every transparent
+# object in the scene, not just among the accents themselves. This is the
+# investigation's named mitigation for AABB-based sorting being unreliable
+# when multiple transparent objects share (near enough) the same center.
 const RENDER_PRIORITY_CORE_HOUSING := -8  # innermost transparent object in the scene (radius 0.64, smaller than the arcs' 0.75) -- drawn first, per the same "innermost first" convention as everything below
 const RENDER_PRIORITY_CORE_SPARKS := -7  # emitted right at CoreHousing's 0.64 boundary (0.68 emission radius) -- between the housing and the arcs (0.75), same "innermost first" ordering
 const RENDER_PRIORITY_ARCS := -6
@@ -460,8 +482,8 @@ const RENDER_PRIORITY_RING_A := 0
 const RENDER_PRIORITY_ORBITAL := 0  # emission_ring_radius 1.5 sits between RingA's 1.3-1.45 band and RingB's 1.55-1.7 band -- same approximate-priority caveat as RENDER_PRIORITY_PARTICLES above, since orbiting particles don't hold a single exact radius either
 const RENDER_PRIORITY_RING_B := 1
 
-# CoreHousing reuses GLASS_SHELL_SHADER (same Fresnel technique as the 4
-# outer glass shells) but with the *opposite* visual intent: dark and
+# CoreHousing reuses GLASS_SHELL_SHADER (same Fresnel technique as the
+# glass/crystal accents) but with the *opposite* visual intent: dark and
 # near-opaque at the rim (a real, deliberate silhouette -- "housing"),
 # transparent at center (so the glow sphere and emblem inside read
 # through it, unobstructed). A high fresnel_power keeps that rim tight
@@ -602,9 +624,9 @@ const WISP_EMISSION_ENERGY := 1.8  # baseline HDR multiplier, times wisp_intensi
 # new this pass; full per-state reasoning (why ERROR's rings are fast and
 # chaotic, why OFFLINE's are nearly still, etc.) is in this pass's
 # integration report. glass_rim_intensity/glass_lens_strength (full
-# Fresnel glass pass) multiply the 4 glass shells' structural per-shell
-# baselines (GLASS_SHELL_CONFIGS) -- e.g. ERROR's shells run brighter/more
-# distorted, OFFLINE's are barely visible, matching each state's existing
+# Fresnel glass pass) multiply the glass/crystal accents' structural
+# per-accent baselines (GLASS_ACCENT_CONFIGS) -- e.g. ERROR's accents run
+# brighter/more distorted, OFFLINE's are barely visible, matching each state's existing
 # ring/arc/particle behavior rather than introducing a new, separate mood.
 # Colors for executing/completed/error/offline
 # deliberately reuse the exact RGB values theme.py's ORB_COLORS already
@@ -783,7 +805,7 @@ const STATE_PROFILES := {
 @onready var arc_a: MeshInstance3D = $ArcA
 @onready var arc_b: MeshInstance3D = $ArcB
 @onready var activity_label: Label = $UI/ActivityLabel
-@onready var glass_shells: Array[MeshInstance3D] = [$GlassShell1, $GlassShell2, $GlassShell3, $GlassShell4]
+@onready var glass_accents: Array[MeshInstance3D] = [$RingA/Plate1/GlassAccentA, $RingB/Plate2/GlassAccentB]
 @onready var core_housing: MeshInstance3D = $CoreHousing
 @onready var core_emblem: MeshInstance3D = $CoreEmblem
 @onready var plates: Array[MeshInstance3D] = [$RingA/Plate1, $RingB/Plate2, $RingA/Plate3]
@@ -806,7 +828,7 @@ var _arc_material_b: ShaderMaterial
 var _particle_material: StandardMaterial3D
 var _current_activity := "Idle"  # matches ActivityLabel's own .tscn default text
 var _activity_tween: Tween
-var _glass_materials: Array[ShaderMaterial] = []
+var _glass_accent_materials: Array[ShaderMaterial] = []
 var _housing_material: ShaderMaterial
 var _emblem_material: StandardMaterial3D
 var _ring_segments_a: Array[MeshInstance3D] = []
@@ -972,22 +994,36 @@ func _ready() -> void:
 		wisp.set_surface_override_material(0, wisp_mat)
 		_wisp_materials.append(wisp_mat)
 
-	for i in range(glass_shells.size()):
-		var shell := glass_shells[i]
-		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
-		shell.scale = config["scale"]
-		shell.rotate_x(deg_to_rad(config["tilt_x_deg"]))
-		shell.rotate_z(deg_to_rad(config["tilt_z_deg"]))
+	for i in range(glass_accents.size()):
+		var accent := glass_accents[i]
+		var config: Dictionary = GLASS_ACCENT_CONFIGS[i]
+		# Ellipsoid, not crystal-shard -- see the GLASS_ACCENT_CONFIGS
+		# comment above for why (a real screenshot caught flat-faceted
+		# geometry blooming out under this Fresnel shader). A unit sphere
+		# mesh, non-uniformly scaled per accent via "scale" below, same
+		# construction CoreHousing/the old shells already use safely.
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		sphere.radial_segments = 24
+		sphere.rings = 12
+		accent.mesh = sphere
+		accent.scale = config["scale"]
+		accent.position = config["local_offset"]
+		var accent_rot: Vector3 = config["rotation_deg"]
+		accent.rotate_x(deg_to_rad(accent_rot.x))
+		accent.rotate_y(deg_to_rad(accent_rot.y))
+		accent.rotate_z(deg_to_rad(accent_rot.z))
 
 		var mat := ShaderMaterial.new()
 		mat.shader = GLASS_SHELL_SHADER
 		mat.render_priority = config["render_priority"]
-		shell.set_surface_override_material(0, mat)
-		_glass_materials.append(mat)
+		accent.set_surface_override_material(0, mat)
+		_glass_accent_materials.append(mat)
 
-	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d, core sparks=%d, orbital particles=%d, wisps=%d" % [
+	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass accents=%d, core housing + %d-point emblem vertices=%d, core sparks=%d, orbital particles=%d, wisps=%d" % [
 		_ring_segments_a.size(), _ring_segments_b.size(), plates.size(),
-		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
+		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_accent_materials.size(),
 		EMBLEM_POINTS, core_emblem.mesh.surface_get_array_len(0),
 		core_sparks.amount, orbital_particles.amount, wisps.size(),
 	])
@@ -1261,7 +1297,7 @@ func _process(delta: float) -> void:
 
 	_update_rings(delta, profile)
 	_update_arcs(delta, profile)
-	_update_glass_shells(profile)
+	_update_glass_accents(profile)
 	_update_core_housing()
 	_update_plates(delta, profile)
 	_update_core_sparks(profile)
@@ -1331,24 +1367,32 @@ func _update_arcs(delta: float, profile: Dictionary) -> void:
 		mat.set_shader_parameter("turbulence", turbulence)
 
 
-## STAGE 2 of the full Fresnel glass pass: same-scene lensing now enabled
-## (lens_distortion driven from STATE_PROFILES' glass_lens_strength),
-## on top of the Fresnel rim layering verified alone in stage 1's real
-## screenshots. See orb_glass_shell.gdshader's own comment for exactly
-## what this can and can't warp (the core and empty/desktop background --
-## never the rings/particles/other shells, which are transparent and not
-## yet drawn when the single per-frame screen copy is taken).
-func _update_glass_shells(profile: Dictionary) -> void:
+## V2-2: per-accent Fresnel update, same lens/rim mechanics the old 4-shell
+## system used (STATE_PROFILES' glass_rim_intensity/glass_lens_strength as
+## the per-state multiplier over each accent's own structural baseline in
+## GLASS_ACCENT_CONFIGS) -- but base_color now follows Q9's actual rule for
+## "Housing/glass accents" (only a faint 15% tint of _current_color over a
+## fixed pale base, same lerp CoreHousing already uses just below) instead
+## of the old shells' full _current_color, which never matched that rule.
+## core_alpha is each accent's own fixed structural value now (no shared
+## near-zero constant) -- high enough to pass the Q4 silhouette test on its
+## own, not reliant on lens/emission. See orb_glass_shell.gdshader's own
+## comment for exactly what lens_distortion can and can't warp (the core
+## and empty/desktop background -- never the rings/particles/other
+## transparent objects, which haven't been drawn yet when the single
+## per-frame screen copy is taken).
+func _update_glass_accents(profile: Dictionary) -> void:
 	var rim_intensity: float = profile["glass_rim_intensity"]
 	var lens_strength: float = profile["glass_lens_strength"]
-	for i in range(_glass_materials.size()):
-		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
-		var mat := _glass_materials[i]
-		mat.set_shader_parameter("base_color", (_current_color + config["tint"]).clamp())
-		mat.set_shader_parameter("fresnel_power", GLASS_BASE_FRESNEL_POWER + config["power_offset"])
-		mat.set_shader_parameter("rim_alpha", clamp(GLASS_BASE_RIM_ALPHA + config["rim_offset"], 0.0, 1.0) * rim_intensity)
-		mat.set_shader_parameter("core_alpha", GLASS_CORE_ALPHA)
-		mat.set_shader_parameter("lens_distortion", GLASS_LENS_DISTORTION_BASE * lens_strength)
+	var tinted := GLASS_ACCENT_BASE_COLOR.lerp(_current_color, 0.15)
+	for i in range(_glass_accent_materials.size()):
+		var config: Dictionary = GLASS_ACCENT_CONFIGS[i]
+		var mat := _glass_accent_materials[i]
+		mat.set_shader_parameter("base_color", tinted)
+		mat.set_shader_parameter("fresnel_power", GLASS_ACCENT_BASE_FRESNEL_POWER + config["power_offset"])
+		mat.set_shader_parameter("rim_alpha", clamp(GLASS_ACCENT_BASE_RIM_ALPHA + config["rim_offset"], 0.0, 1.0) * rim_intensity)
+		mat.set_shader_parameter("core_alpha", config["core_alpha"])
+		mat.set_shader_parameter("lens_distortion", GLASS_ACCENT_LENS_DISTORTION_BASE * lens_strength)
 
 
 ## CoreHousing's base_color gets only a faint tint of _current_color (15%)

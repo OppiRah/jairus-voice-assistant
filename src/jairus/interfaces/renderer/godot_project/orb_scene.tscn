@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://c8p0orbrenderer001"]
+[gd_scene load_steps=11 format=3 uid="uid://c8p0orbrenderer001"]
 
 [ext_resource type="Script" path="res://orb_controller.gd" id="1_script"]
 
@@ -42,12 +42,6 @@ angular_velocity_max = 45.0
 scale_min = 0.5
 scale_max = 1.5
 color = Color(0.7, 0.75, 1, 0.6)
-
-[sub_resource type="SphereMesh" id="SphereMesh_glass_shell"]
-radius = 1.0
-height = 2.0
-radial_segments = 32
-rings = 16
 
 [sub_resource type="SphereMesh" id="SphereMesh_core_spark"]
 radius = 0.012
@@ -137,11 +131,15 @@ draw_pass_1 = SubResource("SphereMesh_orbital")
 
 [node name="Plate1" type="MeshInstance3D" parent="RingA"]
 
+[node name="GlassAccentA" type="MeshInstance3D" parent="RingA/Plate1"]
+
 [node name="Plate3" type="MeshInstance3D" parent="RingA"]
 
 [node name="RingB" type="Node3D" parent="."]
 
 [node name="Plate2" type="MeshInstance3D" parent="RingB"]
+
+[node name="GlassAccentB" type="MeshInstance3D" parent="RingB/Plate2"]
 
 [node name="ArcA" type="MeshInstance3D" parent="."]
 
@@ -155,18 +153,6 @@ visible = false
 
 [node name="Wisp3" type="MeshInstance3D" parent="."]
 visible = false
-
-[node name="GlassShell1" type="MeshInstance3D" parent="."]
-mesh = SubResource("SphereMesh_glass_shell")
-
-[node name="GlassShell2" type="MeshInstance3D" parent="."]
-mesh = SubResource("SphereMesh_glass_shell")
-
-[node name="GlassShell3" type="MeshInstance3D" parent="."]
-mesh = SubResource("SphereMesh_glass_shell")
-
-[node name="GlassShell4" type="MeshInstance3D" parent="."]
-mesh = SubResource("SphereMesh_glass_shell")
 
 [node name="UI" type="CanvasLayer" parent="."]
 
