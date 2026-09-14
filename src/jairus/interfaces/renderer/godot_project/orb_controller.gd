@@ -278,45 +278,62 @@ const CRYSTAL_SIDES := 3
 # the same convention _build_ring_segment_mesh() already uses for the ring
 # segments themselves (local XY plane, radius measured from the ring's own
 # center) -- so a plate positioned at a segment's own start_deg/span_deg
-# angle, at that ring's own inner_r, sits AT that segment's real endpoint,
-# not at an independently-guessed angle that merely happens to share the
-# same origin. Each plate's radius is then pulled slightly inward from
-# that endpoint (toward CoreHousing) by roughly 0.6x its own half_height,
-# so its own crystal-shard footprint still reaches out to touch/overlap the
-# ring's inner edge rather than sitting fully clear of it. Reparenting also
+# angle sits AT that segment's real endpoint angle, not at an
+# independently-guessed angle that merely happens to share the same origin.
+#
+# V2-1 strengthening pass: radius was originally pulled inward from the
+# ring's own inner_r by ~0.6x each plate's half_height, on the assumption
+# that the shard's half_height axis (its longest reach, pre-rotation) would
+# point radially outward toward the ring band. It doesn't -- each plate's
+# rotation_deg below was hand-chosen for crystal-facet appearance in an
+# earlier material-tuning pass, not for radial alignment, so that reach axis
+# actually points in an arbitrary 3D direction. A same-angle zoomed
+# real-screenshot check (this pass's own diagnosis) confirmed the result:
+# only a single vertex/corner grazed the ring's inner edge in both visible
+# cases, with the shard's actual bulk sitting inward of the band entirely --
+# real (provable via debug-color pixel inspection) but not visually
+# obvious. Fixed by placing radius at the anchor ring's own BAND MIDPOINT
+# ((inner_r + outer_r) / 2) instead of pulled inward past inner_r: centered
+# inside the band, the plate's center is already within the ring regardless
+# of which way rotation_deg happens to point its longest axis, guaranteeing
+# a real, substantial crossing rather than a chance graze. Reparenting also
 # means each plate now automatically inherits its ring's own rotate_z()
 # spin every frame (_update_rings()) on top of its pre-existing independent
 # local spin (_update_plates(), unchanged) -- it moves WITH its anchor
 # ring, which is what "anchored" has to mean once the ring itself moves.
 # size/rotation_deg/CRYSTAL_SIDES/material are all UNCHANGED from the prior
-# pass -- only angle_deg/radius/height and the scene-tree parent changed.
+# pass -- only radius (per the strengthening-pass comment above) and,
+# before that, angle_deg/radius/height and the scene-tree parent changed.
 const PLATE_CONFIGS := [
 	{
 		# Anchored to RingA segment 0's far endpoint (start_deg=40 +
-		# span_deg=70 = 110 degrees, RING_A_INNER_RADIUS=1.3). Local height
-		# is a small offset along the ring's own local Z (perpendicular to
-		# its tilted plane), giving this plate a touch of independent depth
-		# within its anchor ring rather than sitting flush in-plane.
-		"angle_deg": 110.0, "radius": 1.0, "height": 0.15,
+		# span_deg=70 = 110 degrees). Radius 1.375 = RingA's own band
+		# midpoint ((1.3 + 1.45) / 2), not RING_A_INNER_RADIUS itself -- see
+		# the strengthening-pass comment above. Local height is a small
+		# offset along the ring's own local Z (perpendicular to its tilted
+		# plane), giving this plate a touch of independent depth within its
+		# anchor ring rather than sitting flush in-plane.
+		"angle_deg": 110.0, "radius": 1.375, "height": 0.15,
 		"size": Vector3(0.55, 0.85, 0.035), "rotation_deg": Vector3(20.0, 10.0, 55.0),
 	},
 	{
 		# Anchored to RingB segment 1's far endpoint (start_deg=220 +
-		# span_deg=60 = 280 degrees, RING_B_INNER_RADIUS=1.55).
-		"angle_deg": 280.0, "radius": 1.35, "height": -0.1,
+		# span_deg=60 = 280 degrees). Radius 1.625 = RingB's own band
+		# midpoint ((1.55 + 1.7) / 2).
+		"angle_deg": 280.0, "radius": 1.625, "height": -0.1,
 		"size": Vector3(0.4, 0.6, 0.03), "rotation_deg": Vector3(-15.0, 70.0, 10.0),
 	},
 	{
-		# Anchored to RingA segment 2's near endpoint (start_deg=220,
-		# RING_A_INNER_RADIUS=1.3) -- a different segment from Plate1's
-		# anchor, and the opposite (near, not far) end of it, so all three
-		# plates anchor to visibly distinct points, not a repeated pattern.
-		# The old angle_deg=200.0/radius=1.1 (and the whole prior camera-
-		# occlusion/containment history at this entry) was a world-space
-		# value from before this plate had any anchor relationship at all;
-		# it's superseded, not extended, by this pass's anchor-derived
-		# local placement.
-		"angle_deg": 220.0, "radius": 1.14, "height": 0.05,
+		# Anchored to RingA segment 2's near endpoint (start_deg=220) -- a
+		# different segment from Plate1's anchor, and the opposite (near, not
+		# far) end of it, so all three plates anchor to visibly distinct
+		# points, not a repeated pattern. Radius 1.375 = RingA's own band
+		# midpoint, same reasoning as Plate1 above. The old angle_deg=200.0/
+		# radius=1.1 (and the whole prior camera-occlusion/containment
+		# history at this entry) was a world-space value from before this
+		# plate had any anchor relationship at all; it's superseded, not
+		# extended, by this pass's anchor-derived local placement.
+		"angle_deg": 220.0, "radius": 1.375, "height": 0.05,
 		"size": Vector3(0.62, 0.48, 0.04), "rotation_deg": Vector3(35.0, -25.0, 120.0),
 	},
 ]
