@@ -190,14 +190,42 @@ const RING_B_SEGMENTS := [
 const PLATE_BASE_COLOR := Color(0.09, 0.095, 0.11)
 const PLATE_METALLIC := 0.65
 const PLATE_ROUGHNESS := 0.35
+# Material fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 2, variant
+# C -- the investigation's strongest result of the five tested): Godot's
+# built-in StandardMaterial3D rim feature added on top of the existing real-
+# lit metal recipe, same rim/rim_tint values validated in facet_poc_test.gd.
+# No new shader, stays fully opaque (no transparency-sorting risk) -- adds a
+# glassy edge highlight without touching the dark base color/metallic look.
+const PLATE_RIM := 0.65
+const PLATE_RIM_TINT := 0.35
 const PLATE_SPIN_SPEED := 0.12  # rad/s at plate_activity=1.0 -- slow and heavy-feeling, not energetic like the rings/arcs
+
+# Geometry fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 2): each
+# plate's flat BoxMesh is replaced with _build_crystal_shard() (hexagonal
+# bipyramid, same technique validated in facet_poc_test.gd) sized from that
+# plate's own `size` -- equator_radius/half_height set to half of size.x/
+# size.y so the crystal's bounding footprint stays comparable to the
+# original box's width/height (this also shrinks worst-case center-to-
+# vertex reach vs. the old box's half-diagonal, since a bipyramid's max
+# reach is orientation-independent -- helps stage 1's containment margin
+# rather than reopening it). CRYSTAL_SIDES=6 matches the validated PoC.
+const CRYSTAL_SIDES := 6
+# Containment fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 1):
+# radius/height pulled inward on all three plates so (radius + the plate's
+# own worst-case half-diagonal reach) stays comfortably under RingB's 1.7
+# outer edge -- values are PLATE_CONFIGS_FIXED from silhouette_poc_test.gd,
+# verified there by real screenshot to keep every plate fully inside the
+# ring/glow silhouette. size/rotation_deg/angle_deg are UNCHANGED: apparent
+# on-screen prominence comes from size, not radius, so this is a pure
+# reposition, not a shrink -- see the investigation doc's own resolution of
+# the "visible vs. contained" tension.
 const PLATE_CONFIGS := [
 	{
-		"angle_deg": 35.0, "radius": 1.12, "height": 0.32,
+		"angle_deg": 35.0, "radius": 1.0, "height": 0.28,
 		"size": Vector3(0.55, 0.85, 0.035), "rotation_deg": Vector3(20.0, 10.0, 55.0),
 	},
 	{
-		"angle_deg": 158.0, "radius": 1.58, "height": -0.42,
+		"angle_deg": 158.0, "radius": 1.15, "height": -0.34,
 		"size": Vector3(0.4, 0.6, 0.03), "rotation_deg": Vector3(-15.0, 70.0, 10.0),
 	},
 	{
@@ -222,7 +250,13 @@ const PLATE_CONFIGS := [
 		# height/size/rotation_deg untouched -- rotation was never the
 		# problem (face_to_camera_deg=42 degrees, a perfectly normal
 		# readable angle, not edge-on).
-		"angle_deg": 200.0, "radius": 1.3, "height": 0.14,
+		#
+		# Containment fix (later pass, see PLATE_CONFIGS' own comment above):
+		# radius pulled in again, 1.3->1.1, and height 0.14->0.12 -- this
+		# plate's own worst-case reach was still exceeding RingB's silhouette
+		# alongside Plate1/Plate2's. angle_deg=200.0 (this plate's actual
+		# occlusion fix) is untouched.
+		"angle_deg": 200.0, "radius": 1.1, "height": 0.12,
 		"size": Vector3(0.62, 0.48, 0.04), "rotation_deg": Vector3(35.0, -25.0, 120.0),
 	},
 ]
@@ -727,9 +761,8 @@ func _ready() -> void:
 	for i in range(plates.size()):
 		var plate := plates[i]
 		var config: Dictionary = PLATE_CONFIGS[i]
-		var box := BoxMesh.new()
-		box.size = config["size"]
-		plate.mesh = box
+		var plate_size: Vector3 = config["size"]
+		plate.mesh = _build_crystal_shard(plate_size.x * 0.5, plate_size.y * 0.5, CRYSTAL_SIDES)
 
 		var angle: float = deg_to_rad(config["angle_deg"])
 		var radius: float = config["radius"]
@@ -743,6 +776,9 @@ func _ready() -> void:
 		plate_mat.albedo_color = PLATE_BASE_COLOR
 		plate_mat.metallic = PLATE_METALLIC
 		plate_mat.roughness = PLATE_ROUGHNESS
+		plate_mat.rim_enabled = true
+		plate_mat.rim = PLATE_RIM
+		plate_mat.rim_tint = PLATE_RIM_TINT
 		plate.set_surface_override_material(0, plate_mat)
 
 	for i in range(glass_shells.size()):
@@ -875,6 +911,49 @@ func _build_emblem_mesh() -> ArrayMesh:
 		st.add_vertex(b)
 
 	st.generate_normals()  # PRIMITIVE_TRIANGLES supports this (unlike _build_arc_mesh()'s strip) -- harmless since the material is unshaded anyway, but free and correct
+	return st.commit()
+
+
+## Hexagonal bipyramid ("crystal shard"): a top apex, a bottom apex, and
+## `sides` equator points, forming 2*sides triangular facets. Each facet
+## gets its OWN three vertex copies (never shared with a neighboring
+## facet) with the SAME flat per-face normal on all three -- the
+## structural property a single flat plate cannot have regardless of
+## material: real, distinct face normals that catch the scene's one
+## OmniLight3D differently per face. Reused VERBATIM from
+## facet_poc_test.gd's _build_crystal_shard() (ORB_SILHOUETTE_MATERIAL_
+## INVESTIGATION.md problem 2, variant B/C) -- same proven technique, not
+## re-derived.
+func _build_crystal_shard(equator_radius: float, half_height: float, sides: int) -> ArrayMesh:
+	var top := Vector3(0, half_height, 0)
+	var bottom := Vector3(0, -half_height, 0)
+	var equator: Array[Vector3] = []
+	for i in range(sides):
+		var angle := float(i) / float(sides) * TAU
+		equator.append(Vector3(cos(angle) * equator_radius, 0.0, sin(angle) * equator_radius))
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in range(sides):
+		var a: Vector3 = equator[i]
+		var b: Vector3 = equator[(i + 1) % sides]
+
+		var n_top := (b - a).cross(top - a).normalized()
+		st.set_normal(n_top)
+		st.add_vertex(top)
+		st.set_normal(n_top)
+		st.add_vertex(a)
+		st.set_normal(n_top)
+		st.add_vertex(b)
+
+		var n_bottom := (a - b).cross(bottom - b).normalized()
+		st.set_normal(n_bottom)
+		st.add_vertex(bottom)
+		st.set_normal(n_bottom)
+		st.add_vertex(b)
+		st.set_normal(n_bottom)
+		st.add_vertex(a)
+
 	return st.commit()
 
 
