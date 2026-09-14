@@ -340,6 +340,8 @@ const ARC_SHADER := preload("res://orb_arc_ribbon.gdshader")
 const ARC_RIPPLE_CYCLES := 2.0
 const ARC_ALPHA := 0.6
 
+const WISP_SHADER := preload("res://orb_energy_wisp.gdshader")
+
 # Activity text overlay: shows the real "activity" string the bridge sends
 # (assistant_state.py's _current_activity, defaulting to "Idle" -- matched
 # here so both renderers agree on the idle default). No new palette: the
@@ -497,6 +499,66 @@ const ORBITAL_SCALE_MIN := 0.7
 const ORBITAL_SCALE_MAX := 1.2
 const ORBITAL_EMISSION_ENERGY := 3.0  # dimmer than a core spark, closer to a ring's own emission (EMISSION_ENERGY*0.6=2.1) -- orbital particles are meant to read as riding along with the rings, not out-competing them
 
+# Pass F -- billboard energy wisps (ORB_VFX_TECHNIQUE_ANALYSIS.md's
+# recommended next step: billboard VFX + energy wisps/mist were the one
+# genuinely-missing technique category, validated end-to-end by
+# vfx_technique_poc_test.gd before this pass). Godot 4 spatial shaders have
+# no built-in billboard render mode -- orb_energy_wisp.gdshader reuses the
+# PoC's manual vertex() override VERBATIM (rebuilds MODELVIEW_MATRIX from
+# INV_VIEW_MATRIX, the same trick StandardMaterial3D.billboard_mode wraps
+# internally), not a re-derived approach. Per JAIRUS_ORB_VFX_TECHNIQUE_
+# REFERENCE.md section 5's explicit constraint, wisps must read as
+# electromagnetic field/plasma/holographic energy, NOT smoke/fire/magical
+# fog -- the PoC's specific finding was that radial falloff (soft, no image
+# asset, no hard sprite edge) PLUS noise-driven irregularity together (not
+# either alone) is what produces that read rather than a plain glow dot.
+#
+# Three wisps, deliberately positioned (design doc's own "controlled
+# asymmetry" -- not evenly spaced, same discipline as PLATE_CONFIGS/
+# RING_A_SEGMENTS), straddling RingA/RingB's own 1.3-1.7 band, bridging
+# outward past it into the darker exterior -- not randomly floating, per the
+# reference doc's explicit distinction. Radius placement was tuned by real
+# screenshot, not guessed: an initial placement closer to CoreHousing
+# (radius ~0.8-1.35) rendered with genuinely bright pixels (confirmed via
+# unproject_position + direct pixel sampling) but was visually swallowed by
+# the already-bright core/inner-ring bloom -- an additive glow needs a
+# comparatively DARK local background to read as a distinct shape, which the
+# region just past the ring band actually has. Each wisp orbits the core at
+# its own fixed radius/height (own base_speed, own direction/rate) so it
+# reads as energy actually moving around the physical artifact, not a static
+# decal; per-state wisp_speed (STATE_PROFILES) scales this same orbit on top
+# of each wisp's own structural base_speed -- identical "structural constant
+# + per-state multiplier" split already used everywhere else in this file
+# (segments, glass shells, particles).
+const WISP_CONFIGS := [
+	{"angle_deg": 90.0, "radius": 1.6, "height": 0.4, "quad_size": 0.7, "base_speed": 0.22, "render_priority": 1},
+	{"angle_deg": 245.0, "radius": 1.85, "height": -0.2, "quad_size": 0.9, "base_speed": -0.15, "render_priority": 2},
+	{"angle_deg": 330.0, "radius": 1.45, "height": -0.5, "quad_size": 0.6, "base_speed": 0.3, "render_priority": 1},
+]
+const WISP_SOFTNESS := 0.35  # lower than the PoC's 0.5 -- a fully soft/gaussian falloff reads as haze; a tighter edge (combined with the smoothstep-sharpened noise below) keeps the shape reading as a torn energy patch instead
+const WISP_NOISE_SPEED_BASE := 0.35  # noise scroll rate at wisp_speed=1.0 -- see orb_energy_wisp.gdshader's noise_speed uniform
+# NOT the PoC's frequency=0.15, verbatim -- retuned after real screenshots
+# showed why it doesn't transfer to this production scale. At frequency=0.15
+# and 6.0 both (tested directly, not guessed): a raw pixel scanline through
+# a rendered wisp came back a perfectly smooth, monotonic falloff -- zero
+# irregularity, not merely blur-softened. Dumping the actual baked
+# NoiseTexture2D to disk explained both failures directly: frequency=6.0
+# baked pure single-pixel TV-static (no spatial coherence at all -- averages
+# to flat gray under any minification/bloom blur, same "too high" failure
+# ORB_VFX_TECHNIQUE_ANALYSIS.md already documented for the core noise
+# variant); frequency=0.15 baked a finer mottled texture with real
+# structure, but at only ~5-10px per blob on a 256px texture, those blobs
+# collapse to a handful of screen pixels once mapped onto our ~80px-wide
+# wisp quad -- too fine to survive minification + additive bloom's blur
+# kernel. frequency=0.03, confirmed by the same dump-to-disk method, bakes
+# large, soft, coherent blobs (~30-50px each) that are actually big enough,
+# relative to THIS quad's on-screen footprint, to read as genuine shape
+# irregularity rather than smoothing away to a uniform gray. Same technique,
+# retuned for a much smaller on-screen object than the PoC's isolated,
+# unobstructed test quad.
+const WISP_NOISE_FREQUENCY := 0.03
+const WISP_EMISSION_ENERGY := 1.8  # baseline HDR multiplier, times wisp_intensity per state -- kept well under CORE_GLOW_EMISSION_ENERGY (6.0) in every state, checked in the existing Pass A emission-hierarchy print (see _handle_message())
+
 # One row per real AssistantStatus value -- every value that makes a
 # state FEEL different, not just a different color, lives here as a
 # single named table rather than scattered through _process()'s logic,
@@ -543,6 +605,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.25,
 		"core_spark_rate": 0.25, "core_spark_speed": 1.0, "core_spark_size": 1.0,
 		"orbital_rate": 0.3, "orbital_speed": 1.0, "orbital_size": 1.0,
+		"wisp_intensity": 0.5, "wisp_speed": 0.4, "wisp_opacity": 0.5,
 	},
 	"listening": {
 		"color": Color(60.0 / 255.0, 200.0 / 255.0, 140.0 / 255.0),
@@ -558,6 +621,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.3,
 		"core_spark_rate": 0.3, "core_spark_speed": 1.05, "core_spark_size": 1.0,
 		"orbital_rate": 0.35, "orbital_speed": 1.15, "orbital_size": 1.0,
+		"wisp_intensity": 0.6, "wisp_speed": 0.5, "wisp_opacity": 0.55,
 	},
 	"thinking": {
 		"color": Color(170.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0),
@@ -573,6 +637,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.6,
 		"core_spark_rate": 0.5, "core_spark_speed": 1.4, "core_spark_size": 1.05,
 		"orbital_rate": 0.5, "orbital_speed": 1.8, "orbital_size": 1.05,
+		"wisp_intensity": 0.9, "wisp_speed": 1.1, "wisp_opacity": 0.8,
 	},
 	"speaking": {
 		"color": Color(250.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0),
@@ -588,6 +653,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.35,
 		"core_spark_rate": 0.35, "core_spark_speed": 1.15, "core_spark_size": 1.0,
 		"orbital_rate": 0.35, "orbital_speed": 1.2, "orbital_size": 1.0,
+		"wisp_intensity": 0.7, "wisp_speed": 0.6, "wisp_opacity": 0.65,
 	},
 	"executing": {
 		"color": Color(60.0 / 255.0, 190.0 / 255.0, 210.0 / 255.0),
@@ -603,6 +669,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.45,
 		"core_spark_rate": 0.65, "core_spark_speed": 1.6, "core_spark_size": 1.1,
 		"orbital_rate": 0.55, "orbital_speed": 1.6, "orbital_size": 1.05,
+		"wisp_intensity": 1.0, "wisp_speed": 1.3, "wisp_opacity": 0.85,
 	},
 	"completed": {
 		"color": Color(210.0 / 255.0, 250.0 / 255.0, 225.0 / 255.0),
@@ -618,6 +685,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.3,
 		"core_spark_rate": 0.5, "core_spark_speed": 1.0, "core_spark_size": 1.1,
 		"orbital_rate": 0.4, "orbital_speed": 1.1, "orbital_size": 1.0,
+		"wisp_intensity": 0.6, "wisp_speed": 0.5, "wisp_opacity": 0.6,
 	},
 	"error": {
 		"color": Color(224.0 / 255.0, 82.0 / 255.0, 79.0 / 255.0),
@@ -633,6 +701,13 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.85,
 		"core_spark_rate": 0.85, "core_spark_speed": 2.0, "core_spark_size": 1.15,
 		"orbital_rate": 0.6, "orbital_speed": 2.2, "orbital_size": 1.1,
+		# "Controlled disruption," not "brightest wisps": error's rings/arcs/
+		# sparks are already the scene's peak brightness -- wisp_speed is
+		# pushed the hardest of any state (erratic, fast-moving orbit +
+		# noise scroll) so the DISRUPTION reads through motion, while
+		# wisp_intensity/opacity stay a notch under executing's so wisps
+		# don't pile onto an already-maximal bloom state.
+		"wisp_intensity": 0.9, "wisp_speed": 1.8, "wisp_opacity": 0.75,
 	},
 	"offline": {
 		"color": Color(74.0 / 255.0, 77.0 / 255.0, 94.0 / 255.0),
@@ -648,6 +723,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.1,
 		"core_spark_rate": 0.03, "core_spark_speed": 0.2, "core_spark_size": 0.8,
 		"orbital_rate": 0.05, "orbital_speed": 0.1, "orbital_size": 0.8,
+		"wisp_intensity": 0.1, "wisp_speed": 0.1, "wisp_opacity": 0.15,
 	},
 	"waiting_confirmation": {
 		"color": Color(235.0 / 255.0, 195.0 / 255.0, 80.0 / 255.0),
@@ -663,6 +739,7 @@ const STATE_PROFILES := {
 		"arc_turbulence": 0.35,
 		"core_spark_rate": 0.35, "core_spark_speed": 1.0, "core_spark_size": 1.0,
 		"orbital_rate": 0.3, "orbital_speed": 0.9, "orbital_size": 1.0,
+		"wisp_intensity": 0.55, "wisp_speed": 0.45, "wisp_opacity": 0.55,
 	},
 }
 
@@ -680,6 +757,7 @@ const STATE_PROFILES := {
 @onready var core_housing: MeshInstance3D = $CoreHousing
 @onready var core_emblem: MeshInstance3D = $CoreEmblem
 @onready var plates: Array[MeshInstance3D] = [$Plate1, $Plate2, $Plate3]
+@onready var wisps: Array[MeshInstance3D] = [$Wisp1, $Wisp2, $Wisp3]
 
 var _socket := WebSocketPeer.new()
 var _connected_once := false
@@ -707,6 +785,8 @@ var _core_spark_material: StandardMaterial3D
 var _core_spark_process_material: ParticleProcessMaterial
 var _orbital_material: StandardMaterial3D
 var _orbital_process_material: ParticleProcessMaterial
+var _wisp_materials: Array[ShaderMaterial] = []
+var _wisp_angles: Array[float] = []  # accumulated orbit angle (radians) per wisp, updated each frame in _update_wisps()
 
 
 func _ready() -> void:
@@ -828,6 +908,32 @@ func _ready() -> void:
 		plate_mat.rim_tint = PLATE_RIM_TINT
 		plate.set_surface_override_material(0, plate_mat)
 
+	# Pass F -- billboard energy wisps. Each gets its own NoiseTexture2D
+	# instance (not a single shared texture) so their noise phases don't all
+	# scroll in visible lockstep, same reasoning as ArcA/ArcB's seed_offset.
+	for i in range(wisps.size()):
+		var wisp := wisps[i]
+		var config: Dictionary = WISP_CONFIGS[i]
+
+		var quad := QuadMesh.new()
+		var quad_size: float = config["quad_size"]
+		quad.size = Vector2(quad_size, quad_size)
+		wisp.mesh = quad
+
+		var angle: float = deg_to_rad(config["angle_deg"])
+		var radius: float = config["radius"]
+		wisp.position = Vector3(cos(angle) * radius, config["height"], sin(angle) * radius)
+		_wisp_angles.append(angle)
+
+		var wisp_mat := ShaderMaterial.new()
+		wisp_mat.shader = WISP_SHADER
+		wisp_mat.render_priority = config["render_priority"]
+		wisp_mat.set_shader_parameter("softness", WISP_SOFTNESS)
+		wisp_mat.set_shader_parameter("use_noise", 1.0)
+		wisp_mat.set_shader_parameter("noise_tex", _make_noise_texture(WISP_NOISE_FREQUENCY))
+		wisp.set_surface_override_material(0, wisp_mat)
+		_wisp_materials.append(wisp_mat)
+
 	for i in range(glass_shells.size()):
 		var shell := glass_shells[i]
 		var config: Dictionary = GLASS_SHELL_CONFIGS[i]
@@ -841,11 +947,11 @@ func _ready() -> void:
 		shell.set_surface_override_material(0, mat)
 		_glass_materials.append(mat)
 
-	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d, core sparks=%d, orbital particles=%d" % [
+	print("[orb_controller] geometry ready: RingA segments=%d, RingB segments=%d, plates=%d, ArcA vertices=%d, ArcB vertices=%d, glass shells=%d, core housing + %d-point emblem vertices=%d, core sparks=%d, orbital particles=%d, wisps=%d" % [
 		_ring_segments_a.size(), _ring_segments_b.size(), plates.size(),
 		arc_a.mesh.surface_get_array_len(0), arc_b.mesh.surface_get_array_len(0), _glass_materials.size(),
 		EMBLEM_POINTS, core_emblem.mesh.surface_get_array_len(0),
-		core_sparks.amount, orbital_particles.amount,
+		core_sparks.amount, orbital_particles.amount, wisps.size(),
 	])
 
 	var err := _socket.connect_to_url(WS_URL)
@@ -867,6 +973,22 @@ func _make_translucent_material() -> StandardMaterial3D:
 	# emission switched on to make use of them.
 	mat.emission_enabled = true
 	return mat
+
+
+## Real Godot FastNoiseLite -> NoiseTexture2D, generated once at startup (no
+## image asset, same discipline as every procedural mesh/material already in
+## this project) -- reused VERBATIM from vfx_technique_poc_test.gd's own
+## _make_noise_texture(), including its frequency parameterization.
+func _make_noise_texture(frequency: float) -> NoiseTexture2D:
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = frequency
+	var tex := NoiseTexture2D.new()
+	tex.width = 256
+	tex.height = 256
+	tex.seamless = true
+	tex.noise = noise
+	return tex
 
 
 ## Builds one "energy arc" as a flat emissive ribbon (a strip of triangles
@@ -1106,6 +1228,7 @@ func _process(delta: float) -> void:
 	_update_plates(delta, profile)
 	_update_core_sparks(profile)
 	_update_orbital_particles(profile)
+	_update_wisps(delta, profile)
 
 	activity_label.add_theme_color_override("font_color", _current_color.lerp(Color.WHITE, ACTIVITY_TEXT_BRIGHTEN))
 
@@ -1261,6 +1384,35 @@ func _update_orbital_particles(profile: Dictionary) -> void:
 	_orbital_material.emission_energy_multiplier = ORBITAL_EMISSION_ENERGY
 
 
+## Pass F: each wisp orbits the core at its own fixed radius/height (own
+## structural base_speed from WISP_CONFIGS), scaled by the current state's
+## wisp_speed -- so at wisp_speed=1.0 a wisp moves at exactly its own
+## structural rate, same "structural constant + per-state multiplier" split
+## already used for ring segments/glass shells/particles. base_color ties to
+## _current_color (like every other energy element) so wisps participate in
+## the state color story rather than reading as a fixed, state-blind layer.
+func _update_wisps(delta: float, profile: Dictionary) -> void:
+	var wisp_intensity: float = profile.get("wisp_intensity", 0.5)
+	var wisp_speed: float = profile.get("wisp_speed", 0.5)
+	var wisp_opacity: float = profile.get("wisp_opacity", 0.5)
+
+	for i in range(wisps.size()):
+		var config: Dictionary = WISP_CONFIGS[i]
+		var base_speed: float = config["base_speed"]
+		_wisp_angles[i] += base_speed * wisp_speed * delta
+
+		var radius: float = config["radius"]
+		wisps[i].position = Vector3(
+			cos(_wisp_angles[i]) * radius, config["height"], sin(_wisp_angles[i]) * radius
+		)
+
+		var mat := _wisp_materials[i]
+		mat.set_shader_parameter("base_color", _current_color)
+		mat.set_shader_parameter("intensity", WISP_EMISSION_ENERGY * wisp_intensity)
+		mat.set_shader_parameter("opacity_multiplier", wisp_opacity)
+		mat.set_shader_parameter("noise_speed", WISP_NOISE_SPEED_BASE * wisp_speed)
+
+
 func _compute_breathe(pulse_speed: float, irregular: bool) -> float:
 	var freq := BASE_PULSE_FREQUENCY * pulse_speed
 	if irregular:
@@ -1318,15 +1470,19 @@ func _handle_message(raw_text: String) -> void:
 		])
 		# Pass A hierarchy check, logged every state entry so it's directly
 		# verifiable from the console/OS log rather than only asserted in a
-		# comment: core_glow/core_emblem must both exceed arc_peak in every
-		# line this ever prints.
+		# comment: core_glow/core_emblem must both exceed arc_peak (and, as
+		# of Pass F, wisp_peak) in every line this ever prints -- a new
+		# bright element is never assumed safe, it's checked the same way
+		# the arcs already are.
 		var core_intensity: float = profile.get("core_intensity", 1.0)
 		var core_glow_emission := CORE_GLOW_EMISSION_ENERGY * core_intensity
 		var core_emblem_emission := CORE_EMBLEM_EMISSION_ENERGY * core_intensity
 		var arc_peak_emission := ARC_EMISSION_ENERGY * float(profile["arc_intensity"])
-		print("[orb_controller] Pass A emission hierarchy for '%s' -> core_glow=%.2f core_emblem=%.2f arc_peak=%.2f (core_intensity=%.2f) -- core_wins=%s" % [
-			new_state, core_glow_emission, core_emblem_emission, arc_peak_emission, core_intensity,
-			core_glow_emission > arc_peak_emission and core_emblem_emission > arc_peak_emission,
+		var wisp_peak_emission := WISP_EMISSION_ENERGY * float(profile.get("wisp_intensity", 0.5))
+		print("[orb_controller] Pass A emission hierarchy for '%s' -> core_glow=%.2f core_emblem=%.2f arc_peak=%.2f wisp_peak=%.2f (core_intensity=%.2f) -- core_wins=%s" % [
+			new_state, core_glow_emission, core_emblem_emission, arc_peak_emission, wisp_peak_emission, core_intensity,
+			core_glow_emission > arc_peak_emission and core_emblem_emission > arc_peak_emission
+				and core_glow_emission > wisp_peak_emission and core_emblem_emission > wisp_peak_emission,
 		])
 
 	_current_state = new_state
