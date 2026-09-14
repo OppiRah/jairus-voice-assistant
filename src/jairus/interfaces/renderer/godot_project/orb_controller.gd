@@ -338,20 +338,36 @@ const PLATE_CONFIGS := [
 	},
 ]
 
-# Energy arcs: built once as static ribbon meshes at _ready() (regenerating
-# geometry every frame is real, avoidable CSG/mesh-rebuild cost this pass
-# doesn't need) -- their "crackling" comes from rotating slowly plus a
-# continuous brightness wave traveling along their length (Pass B: energy
-# ribbons take 2 -- see ARC_SHADER and orb_arc_ribbon.gdshader below),
-# not from reshaping. See _build_arc_mesh()'s own comment for why a
+# Energy arcs: built as ribbon meshes (Pass B: energy ribbons take 2 -- see
+# ARC_SHADER and orb_arc_ribbon.gdshader below) -- their "crackling" comes
+# from a continuous brightness wave traveling along their length, not from
+# reshaping. See _build_ribbon_strip_mesh()'s own comment for why a
 # hand-built SurfaceTool ribbon was chosen over CSG.
-const ARC_POINT_COUNT := 31        # Pass B: raised from 7 -- same underlying sin()-based path formula in _build_arc_mesh(), just sampled far more densely, so the identical deterministic curve reads as a smooth flowing line instead of a jagged low-poly one.
-const ARC_RADIUS := 0.75          # distance from the core center the arc path sits at
-const ARC_SPAN_RADIANS := PI * 0.6  # how much of a circle one arc sweeps
-const ARC_JAGGEDNESS := 0.08      # max perpendicular offset applied to interior points, for a "lightning" feel
+#
+# V2-3 (ORB_V2_DESIGN.md Q6, "Conduit A"): ArcB stays exactly Pass B's
+# original static-mesh-plus-rotate_y() approach ("V1's existing independent
+# orbital arc largely as-is, for contrast... a purely circulating ribbon is
+# a legitimate, different visual statement next to a structural one") --
+# built once in _ready(), never rebuilt. ArcA is the one Q6 asks to change:
+# "its path's two endpoints are now derived from two of the new struts'
+# actual anchor points rather than a free-floating ARC_RADIUS constant...
+# what makes energy read as flowing between the machine's own components."
+# Since those two struts (Plate1 on RingA, Plate2 on RingB -- see
+# ARC_A_ANCHOR_PLATE_INDICES below) keep moving every frame under their own
+# ring rotation/spin, ArcA's mesh is rebuilt each frame in _update_arcs()
+# from their live global_transform.origin, replacing the old rotate_y() for
+# ArcA specifically -- a real per-frame SurfaceTool rebuild for one 31-point
+# ribbon, not the "genuine occlusion-aware" kind of lift Q6 doesn't ask for
+# here; this project's own FPS headroom (~1800fps combined-scene, V2-2's
+# report) has ample room for it, confirmed again in this pass's own stage 5.
+const ARC_POINT_COUNT := 31        # Pass B: raised from 7 -- same underlying sin()-based path formula, just sampled far more densely, so the identical deterministic curve reads as a smooth flowing line instead of a jagged low-poly one.
+const ARC_RADIUS := 0.75          # ArcB only now -- distance from the core center its circular path sits at
+const ARC_SPAN_RADIANS := PI * 0.6  # ArcB only now -- how much of a circle it sweeps
+const ARC_JAGGEDNESS := 0.08      # max perpendicular offset applied to interior points, for a "lightning" feel -- shared by both arcs' path generators
 const ARC_THICKNESS := 0.015      # ribbon half-width
-const ARC_ROTATION_SPEED := 0.35  # rad/s, both arcs rotate at this fixed rate regardless of state (only brightness varies per state now)
+const ARC_ROTATION_SPEED := 0.35  # rad/s -- ArcB only now (see above); brightness still varies per state for both arcs
 const ARC_EMISSION_ENERGY := 2.2  # Pass A: lowered from 4.0 -- at the old value the arcs out-bloomed the core in every state (a measured bug, see CORE_GLOW_EMISSION_ENERGY above); this baseline, times arc_intensity (max 1.8 at error), now stays under the core's floor in every state
+const ARC_A_ANCHOR_PLATE_INDICES := Vector2i(0, 1)  # indices into `plates` (Plate1/RingA, Plate2/RingB) -- one strut per ring, echoing V2-2's one-accent-per-ring choice, so Conduit A visibly bridges RingA's and RingB's independently-tilted structures (Q3) rather than sitting on just one
 
 # Pass B (energy ribbons take 2) -- orb_arc_ribbon.gdshader replaces the
 # old binary sin()>threshold on/off flicker with a continuous brightness
@@ -795,6 +811,7 @@ const STATE_PROFILES := {
 	},
 }
 
+@onready var camera: Camera3D = $Camera3D  # V2-3: Conduit A's ribbon-strip needs the camera's live position -- see _build_ribbon_strip_mesh()'s view_origin parameter
 @onready var core: MeshInstance3D = $Core
 @onready var particles: GPUParticles3D = $AmbientParticles
 @onready var core_sparks: GPUParticles3D = $CoreSparks
@@ -924,7 +941,15 @@ func _ready() -> void:
 	_arc_material_a.render_priority = RENDER_PRIORITY_ARCS
 	_arc_material_a.set_shader_parameter("ripple_cycles", ARC_RIPPLE_CYCLES)
 	_arc_material_a.set_shader_parameter("alpha", ARC_ALPHA)
-	arc_a.mesh = _build_arc_mesh(0.0)
+	# V2-3: initial mesh only -- plates[i].position isn't set to its real
+	# anchor value until the plates loop below runs, so this placeholder
+	# is a degenerate zero-length ribbon for one construction. Harmless:
+	# _update_arcs() rebuilds it from the plates' real live positions on
+	# the very first _process() frame, before anything is ever presented
+	# on screen.
+	var anchor_a: Vector3 = plates[ARC_A_ANCHOR_PLATE_INDICES.x].position
+	var anchor_b: Vector3 = plates[ARC_A_ANCHOR_PLATE_INDICES.y].position
+	arc_a.mesh = _build_ribbon_strip_mesh(_build_anchored_arc_points(anchor_a, anchor_b, 0.0), camera.global_transform.origin)
 	arc_a.set_surface_override_material(0, _arc_material_a)
 
 	_arc_material_b = ShaderMaterial.new()
@@ -1065,19 +1090,13 @@ func _make_noise_texture(frequency: float) -> NoiseTexture2D:
 	return tex
 
 
-## Builds one "energy arc" as a flat emissive ribbon (a strip of triangles
-## following a short jagged path around the core), via SurfaceTool -- a
-## real Godot core API needing no shader files or external assets.
-## Considered and rejected: a custom .gdshader (visual result impossible
-## to validate without a GPU session, and headless mode's dummy renderer
-## wouldn't even exercise shader compilation, so a broken shader could
-## pass every test here and still fail for real); CSGPolygon3D path
-## extrusion (a real, asset-free option too, but CSG boolean geometry is
-## comparatively expensive to keep live-reshaping, and this pass doesn't
-## need reshaping -- a ribbon built once and just rotated is cheaper and
-## just as controllable for a first pass). seed_offset only changes the
-## deterministic jag pattern (via sin(), not randomness) so ArcA and ArcB
-## look different from each other while staying reproducible for testing.
+## Builds one "energy arc" ribbon's raw path points along a short jagged
+## circular arc around the core -- ArcB's (Conduit B, Q6's "circulating"
+## conduit) own path generator, unchanged from Pass B. seed_offset only
+## changes the deterministic jag pattern (via sin(), not randomness) so
+## ArcA and ArcB used to look different from each other while staying
+## reproducible for testing; ArcA now uses _build_anchored_arc_points()
+## instead (below), so seed_offset here only ever varies ArcB's own jag.
 func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 	var points: PackedVector3Array = []
 	for i in range(ARC_POINT_COUNT):
@@ -1087,7 +1106,64 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 		if i > 0 and i < ARC_POINT_COUNT - 1:
 			point.y += sin((t * 11.0 + seed_offset) * TAU) * ARC_JAGGEDNESS
 		points.append(point)
+	return _build_ribbon_strip_mesh(points)
 
+
+## V2-3 (Q6, Conduit A): ArcA's path points, a straight line between two
+## real strut anchors (point_a/point_b, their live global_transform.origin
+## -- see ARC_A_ANCHOR_PLATE_INDICES/_update_arcs()) with the same
+## sin()-based jag ArcB's path already uses, offset perpendicular to the
+## a->b line itself (not a fixed world Y, which only made sense for ArcB's
+## flat XZ-plane circle) so the "lightning" feel still reads correctly
+## regardless of the two anchors' actual relative orientation.
+func _build_anchored_arc_points(point_a: Vector3, point_b: Vector3, seed_offset: float) -> PackedVector3Array:
+	var line := point_b - point_a
+	var line_dir := line.normalized() if line.length() > 0.001 else Vector3.FORWARD
+	var jag_axis := line_dir.cross(Vector3.UP)
+	if jag_axis.length() < 0.001:
+		jag_axis = line_dir.cross(Vector3.RIGHT)
+	jag_axis = jag_axis.normalized()
+
+	var points: PackedVector3Array = []
+	for i in range(ARC_POINT_COUNT):
+		var t := float(i) / float(ARC_POINT_COUNT - 1)
+		var point := point_a.lerp(point_b, t)
+		if i > 0 and i < ARC_POINT_COUNT - 1:
+			point += jag_axis * sin((t * 11.0 + seed_offset) * TAU) * ARC_JAGGEDNESS
+		points.append(point)
+	return points
+
+
+## Shared ribbon-strip builder (both conduits): a flat emissive strip of
+## triangles following an already-computed path, via SurfaceTool -- a real
+## Godot core API needing no shader files or external assets. Considered
+## and rejected, same reasoning for both conduits: a custom .gdshader for
+## the geometry itself (visual result impossible to validate without a GPU
+## session, and headless mode's dummy renderer wouldn't even exercise
+## shader compilation, so a broken shader could pass every test here and
+## still fail for real); CSGPolygon3D path extrusion (a real, asset-free
+## option too, but CSG boolean geometry is comparatively expensive to keep
+## live-reshaping -- relevant now that ArcA IS rebuilt every frame, per the
+## V2-3 comment above ARC_POINT_COUNT).
+##
+## view_origin (V2-3, built and verified, not assumed): ArcB's original
+## thickness direction (direction.cross(Vector3.UP)) works because its
+## path stays confined to one flat, consistently camera-friendly plane --
+## fine as long as view_origin is left null (ArcB's own call site, and
+## every other caller, is unchanged, so this default preserves the exact
+## original behavior). ArcA's new cross-plane path (an arbitrary line
+## between two struts on two independently-tilted rings) does NOT stay in
+## one plane, and a real stage-1 screenshot caught the result: several
+## segments' fixed world-UP-based thickness ended up nearly edge-on to the
+## camera, so the ribbon rendered as broken dashes instead of a solid
+## strip -- the same class of "provably real geometry, not visually
+## obvious" gap V2-1's struts and V2-2's shells each hit once already.
+## Passing the camera's live position as view_origin makes the thickness
+## direction face the camera at every point along the path instead
+## (direction.cross(point-to-camera)), the standard camera-facing-ribbon
+## fix, so the strip stays visible regardless of which way its own path
+## happens to bend in 3D.
+func _build_ribbon_strip_mesh(points: PackedVector3Array, view_origin: Variant = null) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
 	for i in range(points.size()):
@@ -1099,7 +1175,11 @@ func _build_arc_mesh(seed_offset: float) -> ArrayMesh:
 		else:
 			direction = (points[i + 1] - points[i - 1]).normalized()
 
-		var perp := direction.cross(Vector3.UP)
+		var perp: Vector3
+		if view_origin != null:
+			perp = direction.cross((view_origin as Vector3) - points[i])
+		else:
+			perp = direction.cross(Vector3.UP)
 		if perp.length() < 0.001:
 			perp = direction.cross(Vector3.RIGHT)
 		perp = perp.normalized() * ARC_THICKNESS
@@ -1357,7 +1437,19 @@ func _update_arcs(delta: float, profile: Dictionary) -> void:
 	var turbulence: float = profile.get("arc_turbulence", 0.3)
 	var intensity: float = profile["arc_intensity"]
 
-	arc_a.rotate_y(ARC_ROTATION_SPEED * delta)
+	# Conduit A (Q6, structure-anchored): rebuilt every frame from its two
+	# real strut anchors' live global positions, replacing the old shared
+	# rotate_y() for ArcA specifically -- arc_a's own node transform stays
+	# identity, since the mesh's vertices are already in the same space as
+	# the anchors (both are direct children of the scene root).
+	var anchor_a: Vector3 = plates[ARC_A_ANCHOR_PLATE_INDICES.x].global_transform.origin
+	var anchor_b: Vector3 = plates[ARC_A_ANCHOR_PLATE_INDICES.y].global_transform.origin
+	arc_a.mesh = _build_ribbon_strip_mesh(_build_anchored_arc_points(anchor_a, anchor_b, 0.0), camera.global_transform.origin)
+
+	# Conduit B (Q6, circulating): unchanged from Pass B -- kept
+	# deliberately independent, for contrast ("ambient energy moving
+	# around the whole assembly" next to Conduit A's "energy flowing
+	# through a specific joint").
 	arc_b.rotate_y(-ARC_ROTATION_SPEED * 0.8 * delta)
 
 	for mat in [_arc_material_a, _arc_material_b]:
