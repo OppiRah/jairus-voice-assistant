@@ -188,16 +188,47 @@ const RING_B_SEGMENTS := [
 # section 12's "controlled asymmetry": three distinct numbers chosen by
 # hand, not a formula that would produce even spacing.
 const PLATE_BASE_COLOR := Color(0.09, 0.095, 0.11)
-const PLATE_METALLIC := 0.65
-const PLATE_ROUGHNESS := 0.35
 # Material fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 2, variant
 # C -- the investigation's strongest result of the five tested): Godot's
 # built-in StandardMaterial3D rim feature added on top of the existing real-
-# lit metal recipe, same rim/rim_tint values validated in facet_poc_test.gd.
-# No new shader, stays fully opaque (no transparency-sorting risk) -- adds a
-# glassy edge highlight without touching the dark base color/metallic look.
-const PLATE_RIM := 0.65
-const PLATE_RIM_TINT := 0.35
+# lit metal recipe. No new shader, stays fully opaque (no transparency-
+# sorting risk) -- adds a glassy edge highlight without touching the dark
+# base color.
+#
+# Tuning pass (real screenshot confirmed the first landing -- rim=0.65,
+# rim_tint=0.35, metallic=0.65, roughness=0.35 -- read as predominantly
+# flat/dark, not convincing crystal): three things were investigated, not
+# just one number pushed blindly.
+#   1. Rim alone, pushed hard (0.65->0.95, tint 0.35->0.15 so the rim skews
+#      toward the light color instead of the dark albedo -- rim_tint=1 means
+#      "tint toward albedo," which is the WRONG direction on a near-black
+#      base): confirmed via same-angle/state screenshot to visibly brighten
+#      the facet edges. Real improvement, but alone left the shadowed facets
+#      still fairly flat.
+#   2. Metallic/roughness were investigated as a possible SECOND factor, not
+#      assumed: at metallic=1 a dark albedo drives both diffuse AND specular
+#      toward black (energy conservation uses albedo as F0), so pushing
+#      metallic UP on this near-black color actively works against facet
+#      definition rather than helping it. Lowering metallic (0.65->0.5,
+#      restoring some diffuse fill) and lowering roughness (0.35->0.2,
+#      sharpening the specular response) together measurably increased
+#      facet-to-facet CONTRAST in a same-angle zoomed comparison (the
+#      shadowed facet got darker, the lit facet stayed bright, instead of
+#      both blurring toward the same mid-gray).
+#   3. Facet SCALE was also checked, since no material tuning can fix a
+#      geometry-too-small-to-read problem: at the plates' actual on-screen
+#      size (~40x50px at the real 480x480 window), each facet is only
+#      roughly 15-20px wide -- small, but a real screenshot crop confirmed
+#      genuine facet-to-facet brightness bands are still visible at that
+#      size, not just at a favorable zoomed-in crop. So facet count/size was
+#      NOT the limiting factor this pass -- rim strength and metallic/
+#      roughness were -- but it's close enough to the perceptibility floor
+#      that it remains a real ceiling on how much further material-only
+#      tuning can push this before geometry would need revisiting.
+const PLATE_METALLIC := 0.5
+const PLATE_ROUGHNESS := 0.2
+const PLATE_RIM := 0.95
+const PLATE_RIM_TINT := 0.15
 const PLATE_SPIN_SPEED := 0.12  # rad/s at plate_activity=1.0 -- slow and heavy-feeling, not energetic like the rings/arcs
 
 # Geometry fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 2): each
