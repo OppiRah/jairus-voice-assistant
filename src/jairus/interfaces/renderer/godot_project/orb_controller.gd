@@ -232,15 +232,31 @@ const PLATE_RIM_TINT := 0.15
 const PLATE_SPIN_SPEED := 0.12  # rad/s at plate_activity=1.0 -- slow and heavy-feeling, not energetic like the rings/arcs
 
 # Geometry fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 2): each
-# plate's flat BoxMesh is replaced with _build_crystal_shard() (hexagonal
-# bipyramid, same technique validated in facet_poc_test.gd) sized from that
-# plate's own `size` -- equator_radius/half_height set to half of size.x/
-# size.y so the crystal's bounding footprint stays comparable to the
-# original box's width/height (this also shrinks worst-case center-to-
-# vertex reach vs. the old box's half-diagonal, since a bipyramid's max
-# reach is orientation-independent -- helps stage 1's containment margin
-# rather than reopening it). CRYSTAL_SIDES=6 matches the validated PoC.
-const CRYSTAL_SIDES := 6
+# plate's flat BoxMesh is replaced with _build_crystal_shard() (bipyramid,
+# same technique validated in facet_poc_test.gd) sized from that plate's own
+# `size` -- equator_radius/half_height set to half of size.x/size.y so the
+# crystal's bounding footprint stays comparable to the original box's width/
+# height (this also shrinks worst-case center-to-vertex reach vs. the old
+# box's half-diagonal, since a bipyramid's max reach is orientation-
+# independent -- helps stage 1's containment margin rather than reopening
+# it).
+#
+# Facet-scale pass: CRYSTAL_SIDES was originally 6 (hexagonal bipyramid, 12
+# facets total), matching facet_poc_test.gd's own PoC value -- but at the
+# plates' real on-screen size (~40x50px), that put each facet at only
+# ~15-20px, confirmed via real screenshot (both mine and the person's
+# independent judgment) to sit right at the perceptibility floor: the
+# material tuning was independently confirmed correct, yet plates still
+# read as predominantly flat/dark. Since worst-case center-to-vertex reach
+# is exactly max(equator_radius, half_height) regardless of `sides` --
+# every equator vertex sits on the same circle whether there are 3 of them
+# or 6 -- dropping CRYSTAL_SIDES has NO effect on stage 1's containment
+# margin; it only changes how the same footprint is subdivided. Dropped to
+# 3 (triangular bipyramid, 6 facets total, each roughly 2x the angular
+# width of the hexagonal version) -- the minimum for a real polygon, and
+# the most aggressive facet-enlarging move available without growing the
+# plate itself.
+const CRYSTAL_SIDES := 3
 # Containment fix (ORB_SILHOUETTE_MATERIAL_INVESTIGATION.md problem 1):
 # radius/height pulled inward on all three plates so (radius + the plate's
 # own worst-case half-diagonal reach) stays comfortably under RingB's 1.7
