@@ -148,10 +148,13 @@ draw_pass_1 = SubResource("SphereMesh_orbital")
 [node name="ArcB" type="MeshInstance3D" parent="."]
 
 [node name="Wisp1" type="MeshInstance3D" parent="."]
+visible = false
 
 [node name="Wisp2" type="MeshInstance3D" parent="."]
+visible = false
 
 [node name="Wisp3" type="MeshInstance3D" parent="."]
+visible = false
 
 [node name="GlassShell1" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_glass_shell")
