@@ -112,24 +112,22 @@ shortcut you edited, and try again.
 
 ---
 
-## New: a visual companion (the orb)
+## Desktop window
 
-Running `python main.py` now opens a small window with a glowing, pulsing orb
-instead of just a terminal. It reflects what the assistant is doing:
+Running `python main.py` now opens a small desktop window instead of just a
+terminal — a sidebar (Home/History/Tools/Settings), a current-activity panel,
+and a health indicator. Jairus's visual identity (what used to be a glowing,
+pulsing orb here) has been removed and is being redesigned from scratch; the
+window currently shows a plain placeholder where that visual will eventually
+go. See `RENDERER_BRIDGE.md` for the renderer architecture and
+`archive/orb_v1/` for the previous orb implementation and design R&D.
 
-| Color | Status |
-|---|---|
-| Blue | Idle — listening for the wake word, subtly reactive to room sound |
-| Green | Listening — recording your command, pulses with your actual voice |
-| Violet | Thinking — transcribing / figuring out what you meant |
-| Gold | Speaking — pulses with a synced (simulated) animation while it talks |
-
-**Closing the orb window shuts down the whole assistant** — that's the "off switch"
+**Closing the window shuts down the whole assistant** — that's the "off switch"
 for now, no separate Ctrl+C needed (though Ctrl+C in the terminal still works too).
 
 The terminal window still shows all the same `[transcript]` / `[intent]` / `[player]`
-logs as before — keep it open alongside the orb if you want to see what's happening
-under the hood.
+logs as before — keep it open alongside the desktop window if you want to see
+what's happening under the hood.
 
 ## New: what you can say now
 

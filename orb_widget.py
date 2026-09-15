@@ -1,10 +1,10 @@
 """
-orb_widget.py — the visual companion window: a glowing, pulsing orb that
-reflects the assistant's current state (idle / listening / thinking /
-speaking) and reacts to live audio level, alongside a current-activity
-label and a scrollable recent-commands history list. PySide6/Qt port of
-orb_ui.py's pygame rendering — same colors, same breathing/pulse math,
-same read-only relationship to AssistantState.
+orb_widget.py — the desktop window shell: a sidebar (Home/History/Tools/
+Settings), a current-activity label + scrollable recent-commands history,
+a health indicator, and a slot in HomePage for whatever visual identity
+Jairus ends up with (currently a neutral placeholder — the previous orb
+visual implementation was removed; see archive/orb_v1/ for that R&D and
+RENDERER_BRIDGE.md for the renderer boundary this shell still honors).
 
 Runs on the main thread — Qt owns the window/event loop. The actual voice
 assistant logic runs in a background thread and just updates a shared
@@ -14,19 +14,17 @@ said/did (the same points that already drive speak()) — not live,
 continuously-polled playback state, so they can't go stale/wrong just
 because playback was controlled some other way.
 
-Closing the orb window shuts down the whole assistant (simplest v1
+Closing this window shuts down the whole assistant (simplest v1
 behavior, same as before).
 """
 
-import math
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -66,7 +64,6 @@ from jairus.tools import (
 )
 
 import theme
-from assistant_state import AssistantStatus
 
 SIDEBAR_WIDTH = 150
 
@@ -93,71 +90,6 @@ def _render_history_items(list_widget, history):
 
 
 WINDOW_SIZE = 480
-FPS = 60
-BASE_RADIUS = 70
-
-
-class OrbWidget(QWidget):
-    def __init__(self, state, parent=None):
-        super().__init__(parent)
-        self._state = state
-        self._start_time = time.time()
-        self.setFixedSize(WINDOW_SIZE, WINDOW_SIZE)
-
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self.update)
-        self._timer.start(int(1000 / FPS))
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        painter.fillRect(self.rect(), QColor(theme.BG))  # near-black background so the glow pops
-
-        status, level = self._state.get_snapshot()
-        color = theme.ORB_COLORS.get(status, theme.ORB_COLORS[AssistantStatus.IDLE])
-        t = time.time() - self._start_time
-        center = (self.width() // 2, self.height() // 2)
-
-        self._draw_orb(painter, center, level, color, t)
-
-    def _draw_orb(self, painter, center, level, color, t):
-        # gentle breathing motion, layered on top of live/animated audio level
-        breathe = (math.sin(t * 1.6) + 1) / 2  # 0..1
-        pulse = BASE_RADIUS * (1.0 + 0.15 * breathe + 0.35 * level)
-
-        # aura: soft, layered, low-alpha rings behind the core orb — additive
-        # blending to match pygame's BLEND_RGBA_ADD (overlapping rings brighten)
-        painter.setPen(Qt.NoPen)
-        painter.setCompositionMode(QPainter.CompositionMode_Plus)
-        for i in range(4, 0, -1):
-            ring_radius = int(pulse + i * 14 + level * 20)
-            if ring_radius <= 0:
-                continue
-            alpha = max(0, 60 - i * 12 - int(level * 10))
-            painter.setBrush(QColor(color[0], color[1], color[2], alpha))
-            painter.drawEllipse(
-                center[0] - ring_radius, center[1] - ring_radius,
-                ring_radius * 2, ring_radius * 2,
-            )
-        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-
-        # core orb
-        core_radius = max(1, int(pulse))
-        painter.setBrush(QColor(color[0], color[1], color[2], 230))
-        painter.drawEllipse(
-            center[0] - core_radius, center[1] - core_radius,
-            core_radius * 2, core_radius * 2,
-        )
-
-        # bright inner highlight for a bit of depth
-        highlight_radius = max(4, int(core_radius * 0.35))
-        painter.setBrush(QColor(theme.WHITE))
-        painter.drawEllipse(
-            center[0] - core_radius // 4 - highlight_radius,
-            center[1] - core_radius // 4 - highlight_radius,
-            highlight_radius * 2, highlight_radius * 2,
-        )
 
 
 class ActivityPanel(QWidget):
@@ -165,7 +97,7 @@ class ActivityPanel(QWidget):
 
     Reflects the most recent real thing the assistant said/did (the same
     points that already call speak()) — polled from AssistantState on a
-    timer, same pattern as OrbWidget polling status/level.
+    timer, same pattern HealthIndicator uses for its own status polling.
     """
 
     POLL_INTERVAL_MS = 250
@@ -211,26 +143,33 @@ class ActivityPanel(QWidget):
             self._last_history = history
 
 
-class GodotModeNotice(QWidget):
-    """Stands in for OrbWidget when the Godot renderer (a separate,
-    floating, standalone window -- see ORB_RENDERER_INVESTIGATION.md
-    section 6) owns the orb instead. Occupies the same fixed footprint
-    OrbWidget would, so HomePage's layout doesn't need to change shape
-    between modes -- just this one widget swaps out.
+class VisualPlaceholder(QWidget):
+    """Fills HomePage's visual slot. The previous orb visual implementation
+    was removed (see archive/orb_v1/) and no replacement has been designed
+    yet -- this is an honest empty state, not a preview of anything.
+    Occupies the same fixed footprint the eventual visual will, so
+    HomePage's layout doesn't need to change shape once one exists -- just
+    this one widget swaps out.
 
-    A brief explanatory note, not blank space: per UI_UX_CONTEXT.md's
-    "truth over illusion," silently leaving this area empty (or quietly
-    letting ActivityPanel expand to fill it) would look like something
-    broke rather than like a deliberate mode. Saying plainly why nothing
-    is here is the honest choice.
+    external_renderer=True means a separate renderer process (see
+    RENDERER_BRIDGE.md) is running and owns the visual instead of this
+    window -- still nothing to show here, just a different honest reason
+    why. Per UI_UX_CONTEXT.md's "truth over illusion," silently leaving
+    this area blank (or letting ActivityPanel quietly expand into it) would
+    look like something broke rather than like a deliberate, known state.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, external_renderer=False, parent=None):
         super().__init__(parent)
         self.setFixedSize(WINDOW_SIZE, WINDOW_SIZE)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
-        label = QLabel("The orb is running in a separate\nwindow (Godot renderer).")
+        text = (
+            "A separate renderer process is running\nin its own window."
+            if external_renderer
+            else "Jairus's visual identity is being\nredesigned. Nothing renders here yet."
+        )
+        label = QLabel(text)
         label.setAlignment(Qt.AlignCenter)
         label.setWordWrap(True)
         label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
@@ -238,21 +177,19 @@ class GodotModeNotice(QWidget):
 
 
 class HomePage(QWidget):
-    """The orb + current activity + recent commands -- exactly what the
-    window showed before the sidebar existed, just living in a page now
-    instead of being the window's only content.
+    """The visual slot + current activity + recent commands -- exactly
+    what the window showed before the sidebar existed, just living in a
+    page now instead of being the window's only content.
 
-    godot_mode=True means a separate Godot window (not this one) owns the
-    orb -- see GodotModeNotice above for what fills its place here.
+    external_renderer=True means a separate renderer process (not this
+    window) owns the visual slot -- see VisualPlaceholder above for what
+    fills its place here either way.
     """
 
-    def __init__(self, state, godot_mode=False, parent=None):
+    def __init__(self, state, external_renderer=False, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        if godot_mode:
-            layout.addWidget(GodotModeNotice(self))
-        else:
-            layout.addWidget(OrbWidget(state, self))
+        layout.addWidget(VisualPlaceholder(external_renderer=external_renderer, parent=self))
         layout.addWidget(ActivityPanel(state, self))
 
 
@@ -676,7 +613,7 @@ class OrbWindow(QMainWindow):
 
         sidebar = Sidebar(central)
         self.stack = QStackedWidget(central)
-        self.stack.addWidget(HomePage(state, godot_mode=godot_mode, parent=self.stack))  # row 0
+        self.stack.addWidget(HomePage(state, external_renderer=godot_mode, parent=self.stack))  # row 0
         self.stack.addWidget(HistoryPage(state, self.stack))  # row 1
         self.stack.addWidget(ToolsPage(self.stack))  # row 2
         self.stack.addWidget(SettingsPage(self.stack))  # row 3
@@ -698,13 +635,13 @@ class OrbWindow(QMainWindow):
 
 
 def run_orb(state, godot_process=None):
-    """godot_process: the Popen handle for a successfully-launched Godot
-    renderer subprocess (main.py's _try_launch_godot()), or None if the
-    built-in Qt orb owns the orb instead. Either way, this window still
-    hosts the sidebar/History/Tools/Settings/health indicator -- Godot
-    mode only replaces the orb's own visual content (see GodotModeNotice)
-    with a separate, standalone, floating window; it does not replace
-    this QMainWindow.
+    """godot_process: the Popen handle for a successfully-launched external
+    renderer subprocess (main.py's _try_launch_godot()), or None if no
+    external renderer is active. Either way, this window still hosts the
+    sidebar/History/Tools/Settings/health indicator -- an active external
+    renderer only changes what HomePage's visual slot shows (see
+    VisualPlaceholder) since that renderer owns its own, separate,
+    standalone, floating window; it does not replace this QMainWindow.
     """
     app = QApplication.instance() or QApplication(sys.argv)
 

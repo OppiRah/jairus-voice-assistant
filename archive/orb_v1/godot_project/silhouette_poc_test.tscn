@@ -1,0 +1,31 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://silhouette_poc_test.gd" id="1_script"]
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 0
+glow_enabled = true
+glow_intensity = 1.2
+glow_strength = 1.3
+glow_bloom = 0.55
+glow_hdr_threshold = 0.65
+glow_hdr_scale = 2.0
+
+[node name="SilhouettePocTest" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="Rig0" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="Rig0"]
+current = true
+
+[node name="Rig1" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="Rig1"]
+
+[node name="Rig2" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="Rig2"]

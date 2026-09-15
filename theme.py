@@ -3,11 +3,11 @@ theme.py — shared visual theme for the Qt UI (Phase 7, UI polish).
 
 Catalogs and formalizes every color already in use across orb_widget.py
 from Phases 1-6, rather than inventing a new palette. Colors that carry
-real state/permission meaning -- the orb's per-state colors (Phase 1), the
-health indicator's status colors (Phase 3), and the Tools page's
-permission-level colors (Phase 5) -- keep their EXACT existing hex values.
-This module only gives each one a shared name instead of a scattered
-literal; it never redefines what any of them mean. Notably, SUCCESS and
+real state/permission meaning -- the health indicator's status colors
+(Phase 3) and the Tools page's permission-level colors (Phase 5) -- keep
+their EXACT existing hex values. This module only gives each one a shared
+name instead of a scattered literal; it never redefines what any of them
+mean. Notably, SUCCESS and
 WARNING below are literally the same hex values Phases 3/5/6 had already
 converged on independently for "good/immediate" and "needs attention/an
 extra step" (Healthy == Harmless == "applies immediately"; Ollama
@@ -22,8 +22,6 @@ coherent scale.
 
 from PySide6.QtGui import QFont, QFontDatabase
 import qtawesome as qta
-
-from assistant_state import AssistantStatus
 
 # ---- Neutral / structural colors --------------------------------------
 # A subtle three-step elevation scale that had already emerged across
@@ -40,7 +38,7 @@ TEXT_PRIMARY = "#e8eaf0"    # headings, primary labels
 TEXT_SECONDARY = "#c8cbdc"  # list items, badges, sidebar text, status bar text
 TEXT_MUTED = "#8a8fa3"      # section sub-headings, descriptions, secondary notes
 TEXT_DISABLED = "#4a4d5e"   # disabled sidebar items
-WHITE = "#ffffff"           # orb highlight, selected sidebar item text
+WHITE = "#ffffff"           # selected sidebar item text
 
 # ---- Semantic status colors --------------------------------------------
 # Meanings established in Phases 1-6; values unchanged here, just named
@@ -50,33 +48,6 @@ SUCCESS = "#4fd18b"      # Healthy (Phase 3) / Harmless (Phase 5) / "applies imm
 WARNING = "#e0a33c"      # Ollama unavailable (Phase 3) / Disruptive (Phase 5) / "restart required" (Phase 6)
 DESTRUCTIVE = "#e0803c"  # Destructive permission tier (Phase 5)
 ERROR = "#e0524f"        # Dangerous permission tier (Phase 5)
-
-# ---- Orb per-state colors --------------------------------------------
-# idle/listening/thinking/speaking are Phase 1's original four, values
-# unchanged. executing/completed/error/offline are new (status-model
-# expansion) -- each picked to stay visually distinct from all the others
-# on the same orb, not reused from theme.SUCCESS/WARNING/etc. (those name
-# different concepts -- health/permission badges -- and reusing them here
-# risked visually blending with existing orb colors, e.g. theme.SUCCESS is
-# nearly the same green as "listening"). error reuses theme.ERROR's exact
-# RGB on purpose: red already means "error/dangerous" everywhere else in
-# this app, so the orb should agree. offline reuses theme.TEXT_DISABLED's
-# RGB for the same reason: it already means "de-emphasized/inactive".
-# waiting_confirmation has no real trigger yet (see
-# ASSISTANT_STATUS_MODEL.md) and deliberately has no entry here --
-# ORB_COLORS.get()'s existing fallback to idle already covers it safely
-# if that ever changes, rather than inventing a color for a state that
-# can't currently be observed.
-ORB_COLORS = {
-    AssistantStatus.IDLE: (70, 130, 200),
-    AssistantStatus.LISTENING: (60, 200, 140),
-    AssistantStatus.THINKING: (170, 90, 220),
-    AssistantStatus.SPEAKING: (250, 170, 60),
-    AssistantStatus.EXECUTING: (60, 190, 210),
-    AssistantStatus.COMPLETED: (210, 250, 225),
-    AssistantStatus.ERROR: (224, 82, 79),     # same RGB as theme.ERROR ("#e0524f")
-    AssistantStatus.OFFLINE: (74, 77, 94),    # same RGB as theme.TEXT_DISABLED ("#4a4d5e")
-}
 
 # ---- Spacing scale -------------------------------------------------------
 SPACE_XS = 4

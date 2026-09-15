@@ -51,10 +51,12 @@ _DEFAULTS: dict[str, Any] = {
     "whisper_model_size": "small",  # transcribe.py's old MODEL_SIZE
     "music_library_dir": None,      # local_library.py's old MUSIC_LIBRARY_DIR
     "music_match_threshold": 0.55,  # local_library.py's old MATCH_THRESHOLD
-    # Renderer bridge / Godot integration (ORB_RENDERER_INVESTIGATION.md
-    # section 6). "qt_orb" is the default: it requires no configuration
-    # and behaves exactly as this project always has, which is the right
-    # default for someone who has never run it before. "godot" requires
+    # Renderer bridge / external renderer process integration (see
+    # archive/orb_v1/docs/ORB_RENDERER_INVESTIGATION.md section 6 for the
+    # original design reasoning). "qt_orb" is the default: it requires no
+    # configuration and shows a neutral placeholder in the Qt shell's
+    # visual slot (see orb_widget.VisualPlaceholder) -- the right default
+    # for someone who has never run it before. "godot" requires
     # godot_executable_path to be set to a real Godot executable on this
     # machine -- there's no sensible cross-machine default for that, so it
     # stays unset (None) until a user deliberately configures it.

@@ -1,20 +1,20 @@
 """
-main.py — entry point. Starts the orb UI on the main thread and the voice
-assistant logic on a background thread, sharing state between them.
+main.py — entry point. Starts the desktop UI on the main thread and the
+voice assistant logic on a background thread, sharing state between them.
 
-Renderer selection (ORB_RENDERER_INVESTIGATION.md section 6): reads
+Renderer selection (RENDERER_BRIDGE.md): reads
 jairus.configuration.settings' "renderer_mode" ("qt_orb" | "godot"). The
-default, "qt_orb", requires no configuration and is byte-for-byte the
-same behavior this project has always had -- the existing QPainter-based
-OrbWidget never goes away and is not being replaced, only supplemented.
-"godot" attempts to launch the validated Godot renderer
-(src/jairus/interfaces/renderer/godot_project/) as a supervised
-subprocess; if that's misconfigured, missing, or fails to actually start,
-this falls back to "qt_orb" automatically rather than leaving the person
-with no orb at all.
+default, "qt_orb", requires no configuration -- HomePage's visual slot
+shows a neutral placeholder (see orb_widget.VisualPlaceholder; the
+previous orb visual implementation was removed, see archive/orb_v1/).
+"godot" attempts to launch an external Godot renderer at
+src/jairus/interfaces/renderer/godot_project/ as a supervised subprocess;
+if that's misconfigured, missing, or fails to actually start, this falls
+back to "qt_orb" automatically. There is currently no Godot project at
+that path -- "godot" mode is dormant until a new renderer is built there.
 
 Run:  python main.py
-Stop: close the orb window (or Ctrl+C in the terminal)
+Stop: close the window (or Ctrl+C in the terminal)
 """
 
 import os
@@ -55,18 +55,18 @@ def _try_launch_godot():
     exe_path = settings.get("godot_executable_path")
     if not exe_path or not os.path.isfile(exe_path):
         print(f"[main] renderer_mode is 'godot' but godot_executable_path is unset/invalid ({exe_path!r}); "
-              "falling back to the built-in orb")
+              "falling back to the built-in Qt window")
         return None
 
     try:
         proc = subprocess.Popen([exe_path, "--path", _GODOT_PROJECT_PATH])
     except OSError as e:
-        print(f"[main] failed to launch Godot ({e}); falling back to the built-in orb")
+        print(f"[main] failed to launch Godot ({e}); falling back to the built-in Qt window")
         return None
 
     time.sleep(_LAUNCH_CHECK_DELAY_SECONDS)
     if proc.poll() is not None:
-        print(f"[main] Godot exited immediately (code {proc.returncode}); falling back to the built-in orb")
+        print(f"[main] Godot exited immediately (code {proc.returncode}); falling back to the built-in Qt window")
         return None
 
     print(f"[main] Godot renderer launched (pid {proc.pid})")

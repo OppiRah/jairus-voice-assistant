@@ -1,0 +1,77 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://vfx_technique_poc_test.gd" id="1_script"]
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 0
+glow_enabled = true
+glow_intensity = 1.2
+glow_strength = 1.3
+glow_bloom = 0.55
+glow_hdr_threshold = 0.65
+glow_hdr_scale = 2.0
+
+[node name="VfxTechniquePocTest" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5.5)
+current = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 1.5, 2)
+light_energy = 0.6
+omni_range = 8.0
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="LabelA" type="Label" parent="UI"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 280.0
+offset_bottom = 60.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 15
+text = "A: flat core (baseline)"
+
+[node name="LabelB" type="Label" parent="UI"]
+offset_left = 330.0
+offset_top = 20.0
+offset_right = 600.0
+offset_bottom = 60.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 15
+text = "B: noise-modulated core"
+
+[node name="LabelC" type="Label" parent="UI"]
+offset_left = 700.0
+offset_top = 20.0
+offset_right = 1000.0
+offset_bottom = 60.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 15
+text = "C: billboard wisp (no noise)"
+
+[node name="LabelD" type="Label" parent="UI"]
+offset_left = 1090.0
+offset_top = 20.0
+offset_right = 1400.0
+offset_bottom = 60.0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 4
+theme_override_font_sizes/font_size = 15
+text = "D: billboard wisp (FastNoiseLite)"

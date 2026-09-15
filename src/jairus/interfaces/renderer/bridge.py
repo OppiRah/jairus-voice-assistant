@@ -1,19 +1,20 @@
 """Renderer Bridge — pushes AssistantState to an external real-time
-renderer (the Godot orb) over a local WebSocket.
+renderer process over a local WebSocket.
 
-ORB_RENDERER_INVESTIGATION.md section 6 (migration strategy): this is a
-new, additive READER of AssistantState, mirroring exactly the same
-read-only relationship orb_widget.py's own OrbWidget already has --
-get_snapshot()/get_activity_snapshot() only, no new writer methods, no
-change to how anything currently writes to AssistantState. The Agent
-Core, Tool Registry, and Policy Engine are never touched or imported
-here; this module has no way to affect what Jairus does, only to report
-what AssistantState already says.
+See archive/orb_v1/docs/ORB_RENDERER_INVESTIGATION.md section 6 (migration
+strategy) for the original design reasoning. This is a new, additive
+READER of AssistantState, mirroring the same read-only relationship
+orb_widget.py's Qt shell already has -- get_snapshot()/
+get_activity_snapshot() only, no new writer methods, no change to how
+anything currently writes to AssistantState. The Agent Core, Tool
+Registry, and Policy Engine are never touched or imported here; this
+module has no way to affect what Jairus does, only to report what
+AssistantState already says.
 
 Runs on its own port, deliberately distinct from every other WebSocket
 server in this project:
   - 8765: the real Android Gateway (Phase 13, gateway_server.py)
-  - 8766: orb_renderer_poc/test_driver.py's throwaway PoC test port
+  - 8766: archive/orb_v1/orb_renderer_poc/test_driver.py's throwaway PoC test port
   - 8767: THIS bridge (real integration)
 
 Message shape matches what orb_renderer_poc's Godot client already
