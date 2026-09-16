@@ -206,6 +206,73 @@ the single most important open finding in this prototype: the
 D) is currently **unconfirmed on this machine**, not confirmed as previously
 believed.
 
+## 8a. Follow-up root-cause investigation (diagnostic-only pass)
+
+A dedicated follow-up (no shader/geometry/EnergyModel changes — diagnostic
+only) checked the four candidates recommended in section 15 in order, on
+this same machine:
+
+1. **Ran the archived project itself, completely unmodified**
+   (`archive/orb_v1/godot_project/`, `orb_scene.tscn`, launched exactly as
+   `main.py`'s `_try_launch_godot()` does it —
+   `Godot_v4.7.2-stable_win64.exe --path <project>`). Result: **it also
+   fails today.** A real screenshot shows the orb rendering correctly
+   (rings, plates, glow, particles all visible — the Godot content itself
+   is fine), but the window background is the same flat opaque gray as the
+   prototype, not the real desktop. Pixel-sampled: inside the window
+   `RGB(91,91,91)`; the real desktop at the same height, just outside the
+   window, `RGB(49,49,49)`/`RGB(51,51,51)`. This is decisive: **the
+   archived project's transparency is broken too, unmodified, today** —
+   this is not a prototype-configuration difference.
+2. **Config diff** (`archive/orb_v1/godot_project/project.godot` vs.
+   `prototype/orb_foundation/project.godot`): the settings that actually
+   matter for transparency (`window/size/borderless`, `window/size/
+   transparent`, `window/size/always_on_top`, `window/per_pixel_
+   transparency/allowed`, `renderer/rendering_method`) are identical.
+   The prototype additionally sets `rendering/viewport/transparent_
+   background`, disables debanding, and disables V-Sync — settings the
+   archived project *doesn't* have at all. If anything, the prototype's
+   config is a superset aimed at *more* transparency support, not less.
+   Given step 1, this is moot as an explanation anyway.
+3. **Editor-binary run vs. exported `.exe`**: only the editor-binary-run
+   path was tested (both for the archived project and the prototype), via
+   `Godot_v4.7.2-stable_win64.exe --path <project>`. No export templates
+   are installed in this Godot install (`%APPDATA%\Godot\export_templates\`
+   is empty), so a true exported `.exe` could not be built to test as a
+   separate variable. This is not a gap in the operative question, though:
+   `main.py`'s `_try_launch_godot()` launches Godot exactly the same way I
+   tested (`subprocess.Popen([exe_path, "--path", _GODOT_PROJECT_PATH])`) —
+   there is no exported `.exe` in this project's actual production launch
+   path, so the editor-binary-run result is the representative one for how
+   Jairus would really use this.
+4. **Windows/driver state check**: Windows 11 Home Single Language, build
+   26200 (originally installed 2025-11-15, so not a recent reinstall);
+   NVIDIA driver package dated 2026-08-24 (predates the archived
+   investigation's own Sept 13-14 timestamps, so the GPU driver itself did
+   not change across this window). However, Windows Update history shows
+   **KB5129195 (a Security Update) installed 2026-09-15** — squarely
+   between the archived investigation's last "confirmed working" evidence
+   (`orb_controller.gd` last modified 2026-09-14 22:14,
+   `ORB_RENDERER_INVESTIGATION.md`'s screenshot-verified section 9 dated
+   2026-09-13) and today's testing (2026-09-16, both showing the failure).
+   Two other updates (KB5124007, KB5126052) landed 2026-09-10, before the
+   archived investigation's own successful test, so they're not
+   implicated. **KB5129195 is currently the single most concrete lead**:
+   it is the only system change identified that lands inside the exact
+   window between "last known working" and "now confirmed broken."
+
+**Verdict: this is an environment regression, not a prototype-configuration
+difference.** The archived project — untouched, unmodified, same machine —
+no longer reproduces its own previously-documented working transparent
+window. Whatever changed, changed underneath both projects, not because of
+anything different about how the new prototype was configured. The fix (if
+one exists without an engine/OS update) is not "add a missing Godot
+setting" — every setting the archived project used is already present and
+unchanged. This should be tracked as a Windows/driver-level issue (most
+likely candidate: KB5129195, installed 2026-09-15), not as a Godot project
+configuration bug, and re-checked after any further Windows update or
+NVIDIA driver change on this machine.
+
 ## 9. Distortion/refraction result
 
 Ran the standalone `distortion_test.tscn`: a bright magenta marker sphere
@@ -373,16 +440,16 @@ behaved exactly as intended on the first real test.
 Two independent problems need attention before more of the visual ecosystem
 gets built on top of this foundation, and they don't block each other:
 
-1. **Root-cause the transparent-window failure** as its own small, isolated
-   investigation (not a new orb-visual pass): try a genuinely exported
-   `.exe` (rather than running via the editor binary against a project
-   folder) as one variable; check Windows' own transparency/compositor
-   settings; check whether the archived project's own screenshot evidence
-   can still be reproduced today by running *that* archived project
-   directly (isolating "did something in the OS/driver change since that
-   investigation" from "did something in this new project's setup differ").
-   Until this resolves, the "floating desktop artifact" presentation model
-   should be treated as unconfirmed, not assumed.
+1. ~~Root-cause the transparent-window failure~~ — **done, see section 8a.**
+   Verdict: environment regression (the archived project also now fails,
+   unmodified), most likely caused by Windows security update KB5129195
+   (installed 2026-09-15, squarely between the archived investigation's
+   last working evidence and both projects' current failure). This is not
+   a Godot project setting to fix. Next action here is outside this
+   prototype's scope: check whether a newer NVIDIA driver or Windows
+   update resolves it, or find a different presentation approach that
+   doesn't depend on OS-level per-pixel window transparency, before the
+   "floating desktop artifact" model is assumed for the real UI design.
 2. **Redesign the core's noise/displacement approach**, not just retune its
    parameters. The current smooth-value-noise + ridge-transform approach
    caps out at "natural/organic" or "cellular," never "geometric/alien."
