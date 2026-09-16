@@ -1,0 +1,81 @@
+; Engine configuration file.
+; Jairus Orb — Foundation Prototype (Core + EnergyModel + presentation test).
+; Standalone, isolated Godot project. NOT wired into main.py's renderer
+; launch path and NOT connected to the real Jairus bridge (see
+; JAIRUS_ORB_FOUNDATION_PROTOTYPE.md). Uses a local debug parameter source
+; only. Renderer method and window flags below are carried forward from
+; the archived orb_v1 project's already-validated, stress-tested
+; configuration (archive/orb_v1/docs/ORB_RENDERER_INVESTIGATION.md) rather
+; than being re-derived from scratch.
+
+config_version=5
+
+[application]
+
+config/name="Jairus Orb Foundation Prototype"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "Forward Mobile")
+
+[autoload]
+
+EnergyModel="*res://energy_model.gd"
+PerfMonitor="*res://perf_monitor.gd"
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=640
+window/size/borderless=true
+window/size/transparent=true
+window/size/always_on_top=true
+window/per_pixel_transparency/allowed=true
+window/stretch/mode="disabled"
+vsync/vsync_mode=0
+
+[rendering]
+
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0, 0, 0, 0)
+textures/vram_compression/import_etc2_astc=true
+viewport/transparent_background=true
+anti_aliasing/quality/use_debanding=false
+
+[shader_globals]
+
+energy_intensity={
+"type": "float",
+"value": 0.35
+}
+energy_activity={
+"type": "float",
+"value": 0.25
+}
+energy_turbulence={
+"type": "float",
+"value": 0.2
+}
+energy_coherence={
+"type": "float",
+"value": 0.6
+}
+energy_pulse={
+"type": "float",
+"value": 0.0
+}
+energy_core_morph={
+"type": "float",
+"value": 0.0
+}
+energy_field_strength={
+"type": "float",
+"value": 0.4
+}
+energy_particle_activity={
+"type": "float",
+"value": 0.2
+}
+energy_symbol_reveal={
+"type": "float",
+"value": 0.0
+}

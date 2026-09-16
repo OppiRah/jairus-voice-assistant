@@ -1,0 +1,42 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Shader" path="res://lensing_test.gdshader" id="1"]
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 0
+
+[sub_resource type="SphereMesh" id="SphereMesh_marker"]
+radius = 0.5
+height = 1.0
+
+[sub_resource type="StandardMaterial3D" id="Material_marker"]
+albedo_color = Color(1, 0.1, 0.9, 1)
+emission_enabled = true
+emission = Color(1, 0.1, 0.9, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_shell"]
+radius = 0.9
+height = 1.8
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_shell"]
+shader = ExtResource("1")
+shader_parameter/distortion_strength = 0.06
+
+[node name="DistortionTest" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
+current = true
+
+[node name="BackgroundMarker" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1.4)
+mesh = SubResource("SphereMesh_marker")
+surface_material_override/0 = SubResource("Material_marker")
+
+[node name="LensShell" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_shell")
+surface_material_override/0 = SubResource("ShaderMaterial_shell")

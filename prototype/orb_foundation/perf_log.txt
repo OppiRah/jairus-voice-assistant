@@ -1,0 +1,23 @@
+=== Jairus Orb Foundation Prototype — perf log ===
+Godot version: 4.7.2-stable (official)
+Viewport size: (640, 640)
+Rendering method: mobile
+DIAG window transparent flag: true
+DIAG per_pixel_transparency setting: true
+DIAG transparent_background setting: <null>
+DIAG is_layered_allowed: Windows
+Core mesh: 2562 vertices, 5120 triangles
+FPS=1106.0 frame_ms=4.708 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1844.0 frame_ms=6.099 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1929.0 frame_ms=5.031 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2006.0 frame_ms=6.455 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1904.0 frame_ms=6.618 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1947.0 frame_ms=6.488 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1918.0 frame_ms=6.121 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=1963.0 frame_ms=4.631 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2013.0 frame_ms=5.812 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2093.0 frame_ms=6.170 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2113.0 frame_ms=5.747 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2029.0 frame_ms=5.978 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2075.0 frame_ms=6.044 draw_calls=37 primitives=6808 video_mem_mb=21.3
+FPS=2064.0 frame_ms=3.831 draw_calls=37 primitives=6808 video_mem_mb=21.3
