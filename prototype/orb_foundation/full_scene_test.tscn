@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://micro_particles.gd" id="8"]
 [ext_resource type="Script" path="res://core_sparks.gd" id="9"]
 [ext_resource type="Script" path="res://orbital_particles.gd" id="10"]
+[ext_resource type="Script" path="res://burst_particles.gd" id="11"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 0
@@ -63,6 +64,9 @@ script = ExtResource("9")
 
 [node name="OrbitalParticles" type="Node3D" parent="."]
 script = ExtResource("10")
+
+[node name="BurstParticles" type="Node3D" parent="."]
+script = ExtResource("11")
 
 [node name="UILayer" type="CanvasLayer" parent="."]
 
