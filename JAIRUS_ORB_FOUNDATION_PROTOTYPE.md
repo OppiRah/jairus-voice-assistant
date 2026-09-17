@@ -1125,3 +1125,236 @@ visible but subtler between adjacent high-energy states (`THINKING` vs.
 toward similar" failure — both are refinements a future pass could pursue,
 not evidence this pass didn't work. The core + shared `EnergyModel`, without
 any additional visual layer, now delivers 7 distinguishable personalities.
+
+---
+
+## 20. Wisp technique decision prototype (section 19 step 4)
+
+Per `JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md` section 19's own
+"Recommended Development Order," step 4 — **not particles** — is the layer
+immediately after core validation: *"Wisp technique decision prototype
+(§11): build both candidates small, pick one, discard the other."*
+Particle populations are step 6, after this step and after step 5
+(structural lattice/shells). This pass builds and compares the two real
+candidates section 11's table names, does **not** build the doc's suggested
+hybrid on faith, and makes the call from real evidence gathered in this
+exact project.
+
+### The two candidates, per section 11's own table
+
+| | Control | Cost | Best for |
+|---|---|---|---|
+| **A** — `GPUParticles3D` + `trail_enabled` + `RibbonTrailMesh` | Stochastic, limited per-strand shaping | Low (on paper) | Many small, organic, less-deliberate currents |
+| **B** — Static tube/ribbon along `Curve3D`, shader-driven flow | Full artistic control of path shape | Very low (built once) | A small number of "hero" currents whose exact path matters |
+
+Section 11's own recommendation was a hybrid of both. Per this task's
+explicit instruction, that hybrid was **not** taken on faith — both
+candidates were built small and compared first.
+
+### What was built
+
+Two isolated, switchable comparison scenes (not a merged system), each
+reusing `main.tscn`'s exact `Core` + `CameraRig` + `KeyLight` +
+`WorldEnvironment` setup and the existing `debug_ui.gd` state-switch/
+screenshot harness unmodified, so both candidates are judged under
+identical camera/lighting/state conditions:
+
+- `wisp_test_a.tscn` / `wisp_system_a.gd` — **Candidate A**: 3
+  `GPUParticles3D` emitters (24 particles each — a small number, meant to
+  judge stochastic character, not production scale), `trail_enabled` +
+  `RibbonTrailMesh` (flat, tapered), orbit velocity so strands drift around
+  the core. Driven by `EnergyModel.current_particle_activity` /
+  `current_intensity`, read directly off the autoload each frame (no second
+  parameter source) via `amount_ratio`/`speed_scale` — the documented
+  live-adjustable `GPUParticles3D` properties (`amount` itself restarts the
+  system and pops visibly if changed at runtime, so it stays fixed as a
+  cap).
+- `wisp_test_b.tscn` / `wisp_system_b.gd` / `wisp_hero_ribbon.gdshader` —
+  **Candidate B**: 3 hand-placed "hero" paths, each a `Curve3D` built from 5
+  anchor points with auto-computed tangent handles, `tessellate()`d and
+  built into a camera-facing ribbon strip via `SurfaceTool`
+  (`PRIMITIVE_TRIANGLE_STRIP`), each vertex UV.x-tagged with its position
+  along the path. The mesh-building technique and the flow-shader technique
+  (`wisp_hero_ribbon.gdshader`'s traveling brightness wave, never fully
+  snapping to black) are both reused directly from the archived V1 work
+  (`archive/orb_v1/godot_project/orb_controller.gd`'s
+  `_build_ribbon_strip_mesh()` / `orb_arc_ribbon.gdshader`), not rebuilt
+  from zero — adapted to read the shared `energy_activity` /
+  `energy_turbulence` / `energy_intensity` global uniforms directly instead
+  of local uniforms a controller script pushes per frame.
+
+Neither touches `core.gdshader`, `energy_common.gdshaderinc`,
+`STATE_PROFILES`, or `camera_rig.gd`/`debug_ui.gd`/`perf_monitor.gd`'s
+existing logic — confirmed via `git diff --stat` against all of those paths
+showing zero changes after this pass.
+
+### Stage 1 — both candidates alone, static test
+
+Launched via the project's existing capture harness
+(`Godot_v4.7.2-stable_win64.exe --path <project> res://wisp_test_X.tscn
+--state=THINKING --shots=<path>:<t>`, same mechanism prior passes used) at
+a fixed mid-level state (`THINKING`, `particle_activity=0.7`).
+
+- **Candidate A**: real screenshot shows the core rendering correctly, and
+  — after inspection — two faint, barely-visible white slivers near the
+  bottom edge. No visible flowing trail geometry, no "many small organic
+  currents" read.
+- **Candidate B**: real screenshot shows a clearly visible white ribbon arc
+  sweeping around the core's right/top silhouette, plus a fainter gold arc
+  partially visible past the debug panel. Reads immediately as an
+  intentional energy current, not a rendering accident.
+
+This asymmetry was surprising enough (Candidate A should be the *cheaper,
+easier* technique per section 11's own table) that it was investigated
+before accepting it, rather than assumed to be a tuning miss.
+
+### Root cause: Candidate A is not a tuning problem, it's a renderer incompatibility
+
+This project's `project.godot` sets `renderer/rendering_method="mobile"`
+(confirmed active at runtime — every test run's log line reads `Vulkan
+1.4.351 - Forward Mobile`; the `rendering_method.mobile="gl_compatibility"`
+line is a platform feature-tag override that only applies when *exported
+to* a mobile OS, not on this desktop dev machine). A web search (`Godot 4
+GPUParticles3D trail_enabled Compatibility renderer support`, and a
+follow-up specifically on the Forward Mobile renderer) turned up a
+real, documented Godot limitation, corroborated across multiple
+independent sources including Godot's own GitHub issue tracker: **the
+Mobile and Compatibility renderers do not support the compute-shader path
+`GPUParticles3D`'s `trail_enabled` requires, so trail vertices are never
+generated — the particle system silently falls back to rendering only the
+bare head-particle mesh, with no error or warning.** That is a precise,
+mechanistic match for what the screenshots showed: `RibbonTrailMesh`
+instances rendering as tiny static slivers at each particle's current
+position, never extruded into an actual trail.
+
+Confirmed directly, not just inferred from the search: a diagnostic run
+with `Core.visible = false` (temporary, scratch-only scene, not committed)
+at `EXECUTING` (`particle_activity=0.9`, the densest state) isolated the
+wisps alone. Of 3 emitters × 24 particles (up to ~65 particles visible at
+that `amount_ratio`), only 2-3 tiny disconnected slivers rendered anywhere
+on screen — real, measured evidence of the failure, not assumption.
+
+A CPU-side fallback was tried before giving up on the technique family:
+`CPUParticles3D` doesn't depend on compute shaders, so it was worth
+checking whether it could deliver the same trail character. Real result: a
+script error — **`trail_enabled` is not a valid property on
+`CPUParticles3D` at all** in Godot 4.7; trails are a `GPUParticles3D`-only
+feature, with no CPU-side equivalent. This closes off the fallback
+cleanly: in this project, on this renderer, there is no way to get real
+`GPUParticles3D`/`CPUParticles3D` trail geometry without switching the
+renderer to Forward+, which is out of this task's scope (it would affect
+the already-validated core's rendering path project-wide, not just wisps).
+
+### Stage 2/3 — live EnergyModel states, side by side
+
+Screenshots captured at `IDLE`, `THINKING`, and `EXECUTING` for both
+candidates, same camera/lighting, core visible:
+
+- **Candidate A**: at `IDLE` (`particle_activity=0.15`), zero wisps visible
+  at all. At `EXECUTING` (`particle_activity=0.9`, the theoretical densest
+  case), still only 2-3 faint slivers — confirms the failure is constant
+  across the whole parameter range, not just a low-activity visibility
+  issue.
+- **Candidate B**: at both `IDLE` and `EXECUTING`, all 3 hero ribbons
+  render correctly and consistently. The per-state *brightness* difference
+  (shader's `EMISSION` scales roughly 0.69→1.5 from `IDLE`'s to
+  `EXECUTING`'s `energy_intensity`) is real in the shader math but subtle
+  in a static, non-HDR PNG comparison — genuinely hard to confirm from a
+  still screenshot alone; the flow-*speed* difference (`energy_activity`
+  drives `flow_speed` from 0.15 to 2.5) is animation-only and can't be
+  judged from a static frame at all. Both would need live observation to
+  confirm, which this text-only report format can't fully substitute for —
+  noted honestly rather than claimed as visually confirmed.
+
+A follow-up pair of clean screenshots (debug panel hidden via a
+scratch-only scene variant's `DebugUI.visible = false`, not a change to
+`debug_ui.gd` itself) at `EXECUTING` made the comparison unambiguous: all 3
+of Candidate B's hero currents are clearly visible, sweeping around the
+core at different orientations, dim relative to the core's own emission;
+Candidate A shows the same 2 stray slivers and nothing else.
+
+### Cost comparison, real numbers (6-second soak at `EXECUTING`, same test conditions, `vsync_mode=0`)
+
+| | Steady-state FPS | Primitives (total incl. core) | Wisp-only primitives (core subtracted) | Draw calls |
+|---|---|---|---|---|
+| Candidate A | ~1900-1970 | ~25,570 | ~20,450 | 54 |
+| Candidate B | ~2010-2120 | ~7,710 | ~2,590 | 54 |
+
+Candidate A costs roughly **8x** the primitives of Candidate B for a
+dramatically *worse* visual result — the broken trail geometry still
+allocates real per-particle mesh data (`RibbonTrailMesh` sections × 3
+emitters × 24 particles), it just doesn't render as a connected trail. This
+is a real, measured strike against Candidate A beyond the visual failure
+alone: it is not even the cheaper option in practice, despite section 11's
+a priori "Low" cost rating (that rating is accurate for the *simulation*
+cost `GPUParticles3D` is normally cheap at; it doesn't account for a broken
+trail path still paying for geometry it can't display).
+
+### `EnergyModel` integration cleanliness
+
+Matches section 12's own architectural distinction: Candidate B is a pure
+shader consumer (`wisp_hero_ribbon.gdshader` reads `energy_activity`/
+`energy_turbulence`/`energy_intensity` global uniforms directly, zero
+per-frame script coupling, zero references to `EnergyModel` at all).
+Candidate A needs a `_process()` in `wisp_system_a.gd` that reads
+`EnergyModel` directly every frame, because `GPUParticles3D`'s
+`amount_ratio`/`speed_scale` aren't shader uniforms — exactly the "non-shader
+consumers" case section 12 already calls out. Both integrate correctly
+with the *existing* single-source-of-truth parameters (no second parameter
+source introduced either way), but Candidate B's integration is
+structurally simpler.
+
+### Decision
+
+**Candidate B — static `Curve3D`-built hero ribbons with shader-driven
+flow — wins outright.** This is not a re-statement of section 11's a
+priori hybrid reasoning; it's a decision made from real evidence gathered
+in this exact project: Candidate A is not merely worse, it is **non-
+functional** under this project's actual active renderer (Forward Mobile),
+for a real, documented, verified reason (no compute-shader trail support),
+with no viable same-technique-family fallback (`CPUParticles3D` doesn't
+support trails at all). Candidate B renders correctly, looks intentional,
+stays visually subordinate to the core, costs an order of magnitude fewer
+primitives, and integrates more simply with `EnergyModel`.
+
+**The doc's suggested hybrid (section 11) is explicitly NOT the right
+answer for this project as written.** Mixing a working technique with one
+confirmed broken in this exact rendering configuration isn't a hybrid,
+it's shipping half a broken system. If a future pass wants a second,
+stochastic population of smaller/secondary wisps alongside Candidate B's
+hero currents (closer to the brief's original "hero + secondary" framing),
+it would need to use plain `GPUParticles3D` billboards *without*
+`trail_enabled` (ordinary GPU particle simulation works fine under Forward
+Mobile — only the trail-compute-shader path is broken), not the
+trail-based approach section 11 originally proposed for that role. That is
+a real, separate follow-up question, not something this pass tried to
+answer.
+
+### Honest read: does Candidate B achieve "field currents, not fantasy magic"?
+
+Yes, on the evidence gathered. The 3 hero ribbons read as deliberate energy
+currents tracing paths around the core — smooth, camera-facing, colored
+from the core's own existing white/gold palette (no new hue introduced),
+dim enough to stay subordinate to the core's own emission in every
+screenshot taken. They do not read as smoke, fire, or generic sparkle. The
+honest caveats: this is 3 static, fixed paths with no runtime reshaping —
+appropriate for "hero currents whose exact path matters" per section 11's
+own framing, but it means all visual variety across states comes from the
+shader's brightness/flow-speed/turbulence response, not from the paths
+themselves moving. And the per-state brightness/speed distinctness, while
+real in the shader math, is genuinely hard to confirm from static
+screenshots alone (noted above) — a live-observation check is the natural
+next verification step, not claimed as done here.
+
+### Verdict on readiness to build further on
+
+**Ready.** The decision is made from real, verified evidence (not
+re-stated a priori reasoning), the core is confirmed completely unaffected
+(`git diff --stat` clean against every file the task's scope protected),
+both scenes run with zero script/shader errors, and the winning candidate
+measurably outperforms the alternative on every comparison axis section
+11 itself named. Next steps per section 19 (structural lattice/energy-field
+shells at step 5, then particle populations at step 6) can build on
+Candidate B's hero-ribbon technique with confidence; any future stochastic
+secondary-wisp work should route around `trail_enabled` specifically, per
+the root-cause finding above.
