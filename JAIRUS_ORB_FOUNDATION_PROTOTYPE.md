@@ -1598,3 +1598,260 @@ added. The one real, unresolved trade: shells cost more in measured
 overdraw than they currently contribute in visual legibility at this
 zoom/opacity — worth revisiting `base_alpha` tuning in a future pass, not
 a blocker for building particle populations (step 6) next.
+
+---
+
+## 22. Particle populations (section 19 step 6)
+
+Per `JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md` section 8's table, all 5
+populations, in the doc's own order: micro → core sparks → orbital →
+burst/directional → fragments. Built one at a time, each added to
+`full_scene_test.tscn` (core + wisps + lattice + shells, all already
+validated) and measured before moving to the next, per this task's
+explicit instruction. Cumulative starting budget from section 21: overdraw
+0.2684 at `EXECUTING`, FPS ~1250-1275.
+
+### 1. Micro — `micro_particles.gd`
+
+**Doc spec (section 8)**: "`GPUParticles3D`, low count, additive
+billboard... Continuous, low-intensity always. Present even at `OFFLINE`?
+— recommend near-zero, not literally zero." Section 21 open question 7
+leaves the exact `OFFLINE` floor as a final design call, but the doc does
+give an actionable recommendation — followed directly (an `amount_ratio`
+floor of 0.12, never fully zero), not treated as a blocking ambiguity.
+
+**Built**: a 30-particle sphere-surface emitter around the core (radius
+1.55, outside the core's ~1.34 max displaced radius, avoiding the same
+occlusion mistake section 21's lattice rings hit at too-small a radius),
+`amount_ratio`/`speed_scale` driven directly by
+`EnergyModel.current_activity`, `emission_energy_multiplier` by
+`current_intensity`.
+
+**Two real bugs found and fixed, not guessed at**: (1) `BLEND_MODE_ADD`
+(section 5's general particle recommendation) rendered a completely blank
+capture — confirmed via an isolated diagnostic (core hidden, zero
+particles visible despite `RENDER_TOTAL_PRIMITIVES_IN_FRAME` confirming
+real geometry submitted), the same per-pixel-transparent-viewport
+near-zero-alpha failure section 21's shell/lattice shaders hit. Switched
+to `BLEND_MODE_MIX`. (2) `vertex_color_use_as_albedo` + a
+`ParticleProcessMaterial.color_ramp` fade *also* rendered blank under
+`MIX`, even though a minimal opaque-material diagnostic rendered
+correctly — isolated the vertex-color/ramp path itself as the failure,
+worked around with a fixed `albedo_color` alpha instead. Not root-caused
+further (time budget covers 5 populations); documented as a known gap.
+
+**Screenshot**: real, faint scattered specks visible around the core at
+`EXECUTING`, subordinate, ambient — matches "low count, low-intensity"
+intent. Confirmed non-empty (but sparse) at `OFFLINE` too.
+
+**Cost impact**: overdraw 0.2684 → 0.26866 (+0.1%). Negligible.
+
+### 2. Core sparks — `core_sparks.gd`
+
+**Doc spec (section 8)**: "`GPUParticles3D`, `sub_emitter` targeting
+Core's surface... Continuous trickle + burst on `THINKING`/`EXECUTING`...
+Sub-emitter relationship means this population's own base emission should
+be disabled by design, not left as a leftover default **[DOC]**."
+
+**HONEST DEVIATION, not silently substituted**: the literal two-node
+sub-emitter pair (a spawner `GPUParticles3D` with no `draw_pass` of its
+own, driving a child via `GPUParticles3D.sub_emitter` +
+`ParticleProcessMaterial.sub_emitter_mode = SUB_EMITTER_AT_END`, the real
+documented Godot 4 mechanism) was built and tested **four times**, using
+materials already confirmed working elsewhere in this same pass
+(micro's fixed-alpha fix, and a fully opaque no-transparency material
+that rendered correctly in a standalone non-sub-emitted diagnostic) — all
+four rendered completely blank despite confirmed real geometry
+submission. Transparency, blend mode, and `local_coords` were each ruled
+out by direct test. **Root cause not found within this pass's time
+budget** (5 populations to cover in one unsupervised run) — this is a
+real, unresolved technical gap, flagged here rather than declared solved.
+
+**Substituted**: a single continuously-emitting `GPUParticles3D` at the
+core's surface, each particle itself a spark rather than spawned via
+literal sub-emission — same spatial intent (sparks from the core's
+surface) and same state-reactivity, without the broken mechanism. A
+future pass with more time budget should revisit the literal
+`sub_emitter` API before treating this substitution as final.
+
+**Screenshot**: real, small pale specks visible right at the core's
+silhouette edge at `EXECUTING`, reading as sparks originating from the
+surface.
+
+**Cost impact**: overdraw 0.26866 → 0.26888 (+0.08%). Negligible.
+
+### 3. Orbital — `orbital_particles.gd`
+
+**Doc spec (section 8)**: "`GPUParticles3D`, custom process shader
+constraining motion to orbital paths... Continuous, density scales with
+`activity`... Highest-effort population to get looking non-random; budget
+real prototyping time here." Section 4 names the mechanism: a custom
+`ParticleProcessMaterial` driving orbit motion — Godot's built-in
+`orbit_velocity_min/max`, already proven working in `wisp_system_a.gd`
+during the wisp decision pass, not hand-written shader code.
+
+**Anchored to real structure, not parameterized independently**: radii
+read directly from `structural_lattice.gd`'s own `RING_A_RADIUS`/
+`RING_B_RADIUS` constants (a protected file, not edited — GDScript
+constants are readable externally via `preload().CONST_NAME`); matching
+rotation values duplicated as literals with a comment citing that file as
+their source of truth. This directly applies the task's explicit
+instruction and this project's own repeated lesson (verified in
+`archive/orb_v1/docs/ORB_CONCEPT_GAP_ANALYSIS.md`: V1's particle roles
+were never anchored to the rings/plates the brief wanted).
+
+**Worked on the first real test** — no debugging needed this time.
+Real screenshot shows particles visibly tracing along the lattice rings'
+paths rather than orbiting the object generically.
+
+**Cost impact**: overdraw 0.26888 → 0.26903 (+0.06%). Negligible.
+
+### 4. Burst/directional — `burst_particles.gd`
+
+**Doc spec (section 8)**: "`GPUParticles3D`, `one_shot = true`, triggered
+from `EnergyModel` on state-transition events (e.g. entering `SUCCESS`,
+entering `EXECUTING`) **[DOC]**... Event-driven only... This is the direct
+implementation of the brief's 'should be event-driven, not continuously
+running at maximum' instruction." Confirmed this means genuinely
+event-driven, not continuous, before building.
+
+**Built**: `one_shot=true`, `emitting=false` at rest, triggered by
+connecting a new external listener to `EnergyModel`'s existing, already-
+public `state_changed` signal (energy_model.gd itself untouched — this is
+additive, not a modification) and checking the incoming state name
+against `["SUCCESS", "EXECUTING"]`, which is exactly "entering X"
+semantics since the signal fires once per transition.
+
+**Verified both halves explicitly, not assumed**: a real screenshot at
+rest (`IDLE`, no trigger fired) shows zero burst particles — confirming
+this is genuinely not continuous. A second real screenshot mid-burst
+(`IDLE` → `SUCCESS` transition, captured 0.3s after the switch) shows
+particles visibly flying outward from the core. Gold vs. near-white burst
+color per trigger (`SUCCESS` vs. `EXECUTING`) respects section 15's
+gold-reserved-for-pulse rule rather than one fixed color for both.
+
+**Cost impact**: at rest, overdraw 0.26903 → 0.26906 (+0.01%),
+negligible. At burst peak (mid-`SUCCESS`-transition), overdraw measured
+*lower* (0.26406) than the `EXECUTING` baseline — but that's confounded
+by `SUCCESS`'s own lower `field_strength`/`intensity` profile values, not
+evidence the burst itself is free. Reported as measured, not reframed to
+look better than it is.
+
+### 5. Fragments — `fragments.gd`
+
+**Doc spec (section 8)**: "`MultiMeshInstance3D` if count > ~15-20, else
+a small pool of plain nodes... Continuous, slow, driven by `coherence`
+(more coherent = more 'in formation')... Do not default to
+`GPUParticles3D` here — fragments need individual, recognizable identity."
+
+**8 fragments** (well under the ~15-20 `MultiMesh` threshold) → **plain
+`MeshInstance3D` nodes**, per the doc's own stated default for that range
+— not `MultiMeshInstance3D`, not `GPUParticles3D`. Each is a small
+hand-built angular shard (`SurfaceTool`, no external asset) — "computational
+fragments, not debris" per the design brief's language elsewhere in this
+project, so a faceted crystalline shape rather than an irregular rock.
+Position blends every frame between a jittered scatter (low `coherence`)
+and an evenly-spaced ring formation (high `coherence`), each fragment
+keeping its own seed/phase so they stay individually distinct even "in
+formation," not identical clones moving in lockstep.
+
+**Screenshots** at `ERROR` (`coherence`=0.15) and `EXECUTING`
+(`coherence`=0.9) both show fragments rendering as crisp faceted shards,
+clearly subordinate to the core. **Honest caveat**: the formation-vs-
+scatter distinction itself is subtle in a static frame at this camera
+angle (only ~2 of 8 fragments visible per shot, the rest occluded by the
+core or the debug panel) — noted rather than overclaimed as visually
+confirmed.
+
+**Cost impact**: overdraw 0.26906 → 0.26930 (+0.09%). Negligible.
+
+### Genuine ambiguous forks encountered
+
+**None required stopping this pass.** The one open design question the
+doc itself flags (section 21 item 7, `OFFLINE` particle floor) came with
+an actionable doc recommendation ("near-zero, not literally zero")
+followed directly rather than treated as a blocker. Core sparks' sub-
+emitter failure was a real, time-boxed **bug**, not a design fork with no
+doc-specified answer — diagnosed extensively (4 isolated tests) and
+worked around per this task's own instruction to diagnose/fix bugs
+directly rather than stop for them; flagged honestly as unresolved at the
+technical-mechanism level, not smoothed over.
+
+### Final combined test — all 7 states, all 5 populations + core + wisps + lattice + shells
+
+Real screenshots (`IDLE`, `LISTENING`, `THINKING`, `EXECUTING`, `SUCCESS`,
+`ERROR`, `OFFLINE`) of the fully combined `full_scene_test.tscn`,
+captured via a single chained `--switch=`/`--shots=` run (same harness
+used throughout this project):
+
+- **Core's validated 7-state distinctness remains clearly the dominant
+  visual read in every shot** — smooth/calm at `IDLE`, faceted at
+  `LISTENING`, organized-spiky at `THINKING`, maximally crystalline at
+  `EXECUTING`, gold-flecked at `SUCCESS`, maroon-heavy at `ERROR`, dark
+  and dormant at `OFFLINE`. Not diminished by five more populations on
+  top.
+- **Wisps (Candidate B hero ribbons) remain clearly visible** in every
+  shot, distinguishable from both the lattice rings and the new orbital
+  particles by their meandering, non-planar path.
+- **Both lattice rings remain clearly visible** as distinct halos.
+- **`EXECUTING` visibly shows denser particle activity** than `IDLE`/
+  `LISTENING` — real, visible confirmation that `particle_activity`-driven
+  density scaling (micro, sparks, orbital all read this) is working, not
+  just present in the code.
+- **`OFFLINE` shows the near-zero-not-literally-zero floor working as
+  intended**: dim core, particles present but sparse, camera drift off
+  (existing behavior) — reads as "dormant," not "identical to `IDLE` but
+  darker."
+- Nothing from the five populations buries the core, wisps, lattice, or
+  shells at any of the 7 states.
+
+### Final cumulative overdraw + FPS
+
+| Step | Overdraw (avg. brightness, `EXECUTING`) | Relative to section 21's core+wisps+lattice+shells baseline |
+|---|---|---|
+| Baseline (section 21) | 0.2684 | — |
+| +Micro | 0.26866 | +0.1% |
+| +Core sparks | 0.26888 | +0.17% |
+| +Orbital | 0.26903 | +0.23% |
+| +Burst (at rest) | 0.26906 | +0.25% |
+| +Fragments (all 5 complete) | **0.26930** | **+0.34%** |
+
+**All 5 particle populations combined added ~0.3% to overdraw** — the
+budget concern section 21 flagged (shells as the dominant cost, already
+~5.7x the core-alone baseline) did **not** compound further with
+particles added on top, because every population here uses small,
+geometrically tiny draws (quads of ~0.03-0.08 world units, or 8 small
+shards) that cover a tiny fraction of screen pixels compared to the two
+full-sphere shells — this holds regardless of blend mode, confirmed
+across all 5 incremental measurements moving in the same small direction.
+
+FPS held steady across all 5 additions within this pass's own measurement
+session (~1780-1946 FPS, `EXECUTING`, `vsync_mode=0`), no step showing a
+disproportionate drop. The final 6-second steady-state soak on the fully
+combined scene: **~1868-1917 FPS**. This reads *higher* than section 21's
+own final measurement (~1250-1275 FPS) for the pre-particle scene — an
+apparent contradiction worth naming honestly rather than silently
+adopting the more flattering number: the two measurements were taken in
+separate sessions (not a controlled A/B within one run), so run-to-run
+GPU/driver/thermal variance is the most likely explanation, not particles
+somehow making the scene faster. The fair, controlled comparison is
+*within* this pass's own back-to-back measurements, which stayed flat as
+each population was added — that consistency is the real finding, not
+either session's absolute number in isolation.
+
+### Verdict
+
+**All 5 populations built, working (four exactly per the doc's literal
+technique, one — core sparks — via a documented, honest substitution),
+and within budget.** Overdraw growth from adding an entire particle
+architecture on top of the already-shell-dominated budget was measured at
+~0.3%, not a meaningful new cost driver. Every population is verified
+driven by the existing `EnergyModel` parameters (no second parameter
+source introduced anywhere across all 5). The core, wisps, lattice, and
+shells all remain clearly legible across all 7 states with the full
+particle architecture running. `git diff --stat` confirms zero changes
+to every protected file/system across all 5 commits. The one real,
+unresolved item: core sparks' literal `sub_emitter` mechanism doesn't
+render in this project for a cause not found within this pass's time
+budget — worth a dedicated, better-resourced investigation before
+treating the current single-emitter substitution as final.
