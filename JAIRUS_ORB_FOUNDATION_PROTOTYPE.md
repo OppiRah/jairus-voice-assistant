@@ -715,3 +715,256 @@ coherence's weakened effect needs recovering (e.g., a separate, wider warp
 range applied only where it doesn't threaten configuration A's lobe
 coarseness) or is an acceptable trade-off given the Voronoi configuration's
 own strong organized/chaotic character now covers some of the same ground.
+Item (3) turned out to matter more than expected — see section 18.
+
+---
+
+## 18. State-personality validation — do STATE_PROFILES deliver coherent personalities?
+
+A follow-up task validated the core architectural premise from
+`JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md` §1/§12: that a shared `EnergyModel`
+driving every visual consumer produces *one coherent system changing*, not
+several unrelated sliders moving independently. Scoped to
+`prototype/orb_foundation/` only — no particles/wisps/rings/new visual
+layers, no window/transparency changes, no changes to the core geometry/
+shader from section 17's pass (none were needed; see the one exception noted
+below).
+
+### What was built
+
+- **`STATE_PROFILES`** (`energy_model.gd`): a `const Dictionary` naming all 7
+  real Jairus states, reusing this exact term from the archived design
+  brief (`archive/orb_v1/docs/JAIRUS_ORB_VISUAL_DESIGN_DIRECTION.md` §13,
+  which specified "all state tuning should remain centralized in the
+  existing `STATE_PROFILES` system"). Each entry is a target vector across
+  all 8 `EnergyModel` parameters plus a `camera_drift` bool (not a shader
+  parameter — applied directly to `CameraRig` because `OFFLINE` needs to
+  read as inactive, not "`IDLE` but dimmer," and `CameraRig`'s own
+  activity-based amplitude modulation never reaches zero on its own — a
+  real, separate finding, see below).
+- **`EnergyModel.set_state(name)`**: looks up the profile and calls the
+  existing per-parameter setters — it does not snap `current_*` values.
+  The already-existing per-parameter smoothing rates (fast/medium/slow, set
+  in section 17's predecessor work and unchanged here) carry the transition,
+  which is *the* mechanism being validated, not new logic.
+- **`state_changed` signal**: emitted at the end of `set_state()`, including
+  when `SUCCESS`'s own 2-second timer calls it internally to auto-revert to
+  `IDLE`. `debug_ui.gd` listens for this instead of updating its own
+  label/sliders only from the button press that triggered it — this was a
+  real bug caught during testing (see below), not a preemptive nicety.
+- **Debug UI**: one button per state (2-column grid) plus a live "State:
+  NAME" label, wired to `set_state()`. Existing sliders still work
+  independently and now stay in sync with whichever state is active.
+- **A scripted-capture test harness** (`debug_ui.gd`, cmdline-arg driven:
+  `--state=`, `--switch=NAME:t[,...]`, `--shots=path:t[,...]`): this
+  machine's window `always_on_top` flag proved unreliable against other
+  foreground windows during this pass (an OS-level window compositing
+  quirk, consistent with the transparency regression already documented
+  elsewhere in this project — not something to re-litigate here), so
+  OS-level screen capture kept racing window z-order. The harness instead
+  captures Godot's own live viewport texture (`get_viewport().get_texture()
+  .get_image().save_png()`) on a deterministic in-engine clock, sidestepping
+  window z-order entirely — still a real, live-rendered screenshot, not a
+  fabricated one, just captured through a different, more reliable API for
+  this specific testing need.
+
+### Reasoning per state (parameters: intensity / activity / turbulence /
+coherence / core_morph / field_strength / particle_activity / symbol_reveal)
+
+- **`IDLE` — 0.3 / 0.2 / 0.15 / 0.65 / 0.1 / 0.4 / 0.15 / 0.0.** Low
+  intensity and turbulence for "calm"; coherence held moderately high
+  (0.65, above the dataset's midpoint) for "elegant, controlled" rather
+  than sluggish or messy; `core_morph` kept low (0.1) so the geometry stays
+  close to configuration A's smooth coarse lobes — deliberately *not* zero,
+  so there's a faint hint of the crystalline configuration even at rest,
+  matching "mysterious" over "inert."
+- **`LISTENING` — 0.5 / 0.45 / 0.25 / 0.8 / 0.25 / 0.55 / 0.4 / 0.12.**
+  Coherence is the deliberate signature parameter here (0.8, the highest of
+  any non-`SUCCESS` state) — both source docs specifically call out
+  "energy becoming convergent/organized" as this state's mechanism, so
+  coherence rises sharply relative to `IDLE` while intensity/activity only
+  rise moderately. `symbol_reveal` gets its first non-zero value (0.12) for
+  "gold beginning to appear."
+- **`THINKING` — 0.7 / 0.75 / 0.75 / 0.55 / 0.55 / 0.7 / 0.7 / 0.05.**
+  Turbulence pushed high (0.75) for "complex computational activity," but
+  coherence deliberately held at a *middle* value (0.55) rather than
+  dropped — this is the direct test of "high turbulence but still
+  structured, not chaotic" the task asked for.
+- **`EXECUTING` — 0.95 / 0.9 / 0.85 / 0.9 / 0.8 / 0.9 / 0.9 / 0.3.** Max
+  intensity/activity/field_strength/particle_activity per both source docs.
+  Coherence set *higher* than `THINKING` (0.9 vs 0.55) even though
+  turbulence is also higher — this is the brief's own explicit formula for
+  "overwhelming power under perfect control," tested directly rather than
+  approximated. `symbol_reveal` at a moderate 0.3 (the source table flags
+  this as "context-dependent"; reasoned as "partially visible while
+  actively working," reserving a fuller reveal for `SUCCESS`).
+- **`SUCCESS` — 0.55 / 0.3 / 0.15 / 0.85 / 0.15 / 0.45 / 0.35 / 0.9.**
+  Turbulence and `core_morph` drop back toward `IDLE`'s resting values
+  ("clean synchronized resolution," not more computation), coherence
+  briefly high (0.85, matching the source table's "max, briefly"),
+  `symbol_reveal` high (0.9) for the gold highlight, and `trigger_pulse()`
+  is called once on entry. This profile is inherently transient — `set_state`
+  starts a 2-second timer that auto-reverts to `IDLE` when it fires, modeling
+  "settles back toward idle's baseline" testably without a real state
+  controller.
+- **`ERROR` — 0.35 / 0.4 / 0.5 / 0.15 / 0.4 / 0.3 / 0.25 / 0.0.** No color
+  parameter exists to misuse here by construction — the only lever is the
+  same 8 numbers every other state uses. Coherence is the deliberate
+  signature (0.15, the lowest of any state) — this is the mechanism the
+  brief specifies for expressing failure without a red/danger trope.
+  `core_morph` was deliberately set close to `THINKING`'s value (0.4 vs
+  0.55) with everything else reduced, specifically to test whether
+  coherence *alone* can differentiate "controlled intensity" from
+  "uncontrolled failure" at similar underlying geometric structure — see
+  the honest finding below on how well this worked.
+- **`OFFLINE` — 0.08 / 0.0 / 0.0 / 0.6 / 0.0 / 0.05 / 0.0 / 0.0,
+  `camera_drift: false`.** Not literally all-zero (`intensity` at 0.08) so
+  the object still faintly exists rather than vanishing, matching the
+  source doc's flagged-open "still exists, just dormant" question — resolved
+  here in favor of a faint presence. `activity`/`turbulence` at exactly 0
+  (`IDLE` keeps a nonzero 0.15/0.2) is the main lever distinguishing this
+  from "`IDLE` but dimmer": nothing moves at all. `camera_drift: false` is
+  the other lever — needed because `CameraRig`'s activity-based amplitude
+  modulation (`camera_rig.gd`) only *scales* the drift amplitude between
+  1.0x-1.6x of a constant 4° base; it never reaches zero on its own even at
+  `activity = 0`, contradicting `JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md`
+  §14's stated intent ("at zero amplitude, effectively frozen"). This is a
+  real, minor mismatch between that document's intent and `camera_rig.gd`'s
+  actual implementation, found during this pass — not fixed here (out of
+  scope: `camera_rig.gd` itself wasn't touched), worked around instead by
+  having `set_state()` toggle `drift_enabled` directly, which was already an
+  exposed, intended-for-exactly-this-purpose property.
+
+### Honest per-state screenshot findings (all at rest, after settling)
+
+- **`IDLE`**: reads as reasonably calm — smooth-ish coarse lobes, subdued
+  energy. Weaker than intended on "elegant/mysterious" specifically because
+  the palette's high-contrast mottled pattern (fixed shader constants from
+  section 17's pass, not driven by any `EnergyModel` parameter) looks
+  identical in *character* at every state, just dimmer — a genuinely calm
+  object would likely want a quieter, less "busy" surface marking at rest,
+  and nothing in the current architecture varies that. Real, honest gap.
+- **`LISTENING`**: unexpectedly spiky/faceted for a state whose `core_morph`
+  (0.25) is mostly configuration A. Root cause, confirmed by comparing
+  against `IDLE`/`OFFLINE` (both `core_morph` <= 0.1, both genuinely
+  smooth): the Voronoi configuration's F2-F1 edges are *sharp-slope*
+  features — even blended in at a 25% weight, their local shading gradient
+  (which is what a viewer actually perceives) is disproportionate to their
+  blend-weighted displacement amplitude, because shading responds to slope,
+  not height. A small amount of Voronoi reads as "a lot more crystalline"
+  almost immediately once `core_morph` leaves 0. This is a real,
+  previously-undiscovered property of the section 17 shader work, not a bug
+  in this pass's profiles — `core_morph` is not a perceptually linear
+  "calm-to-spiky" dial the way its numeric range suggests.
+- **`THINKING`**: more intense/bright version of the same spiky character —
+  a real escalation from `LISTENING`, but the shape *language* doesn't
+  progress much further than `LISTENING` already showed; most of the
+  visible change between these two states is brightness, not form.
+- **`EXECUTING`**: brightest, most maximal — clearly "more" than
+  `THINKING`. But scrutinized specifically against "must read as controlled,
+  not dangerous": genuinely ambiguous. The dense radiating shard silhouette
+  could plausibly read as "cut gemstone" (controlled) or "urchin/burst"
+  (aggressive) depending on the viewer, and — this is the important
+  finding — the parameter that's supposed to resolve that ambiguity in the
+  brief's own design (`coherence`, 0.9 in `EXECUTING` vs. 0.55 in
+  `THINKING`) does **not** produce a clearly perceptible difference between
+  the two states' screenshots. This directly confirms, with a concrete
+  visual consequence, the coherence-response regression section 17 already
+  flagged as a side effect of narrowing the warp-amount range — it isn't
+  just a slider that moved less than before, it's specifically undermining
+  the brief's stated mechanism for `EXECUTING`'s single most important
+  constraint. **This is the most significant finding of this pass.**
+- **`SUCCESS`**: works well — visibly rounder/calmer silhouette than the
+  `THINKING`/`EXECUTING` cluster (matching its low `core_morph`), with
+  clearly visible scattered gold speckling. Reads as a genuine, distinct
+  "resolving" moment.
+- **`ERROR`**: no red, confirmed — stays entirely in the established
+  maroon/white/gray palette. Reads as dim and irregular/asymmetric relative
+  to `EXECUTING`, which is the intended mechanism working as designed at
+  the silhouette level. Whether a cold viewer (no context that this is an
+  "error") would specifically read "something is wrong" rather than just
+  "a different, spikier rock" is genuinely unclear — plausible, not
+  certain. Partial success: clearly avoids the red-danger cliché (the
+  explicit constraint), clearly distinct from other states, less clearly a
+  confident "reads as failure" on its own without contextual priming.
+- **`OFFLINE`**: works well and unambiguously — much dimmer, visibly
+  smoother/static geometry, frozen camera. The clearest success of the
+  "must be distinct from its nearest neighbor" tests in this pass (`IDLE`
+  vs. `OFFLINE`), because it had two independent, both-working levers
+  (energy parameters *and* camera stillness) rather than relying on one.
+
+### Transition-quality findings
+
+Two sequences captured (`IDLE`→`EXECUTING`, `EXECUTING`→`ERROR`), 5 frames
+each at increasing elapsed time after the switch. Both read as **one
+continuously-changing system, not a jump cut**: `IDLE`→`EXECUTING` shows
+spikes first emerging at the silhouette edge, then propagating inward as
+brightness climbs, arriving at the full radiating-burst look over roughly
+1.5-2 seconds; `EXECUTING`→`ERROR` shows intensity visibly dropping frame
+by frame while the shape lags slightly behind (matching the fast/medium/slow
+per-parameter smoothing rates being genuinely different, not a single
+uniform lerp), settling into the dimmer, more irregular `ERROR` silhouette
+by ~3 seconds. This is a clear, confirmed win for the architecture: staggered
+per-parameter smoothing produces a transition that looks organic rather
+than mechanical, exactly the property section 12 of the technical
+architecture doc predicted from this mechanism.
+
+### `field_strength` / `particle_activity` honesty check
+
+**Confirmed fully inert, plainly stated**: both are declared as global
+uniforms, smoothed by `EnergyModel`, and pushed to the shader every frame
+exactly like the other 6 parameters — but `core.gdshader` (the only shader
+driving a visible object in this prototype) never reads either one.
+`grep`-confirmed, not assumed. Every `STATE_PROFILES` entry still sets
+reasonable target values for them (matching the source table's per-state
+guidance), because `EnergyModel` is the correct place to own that data
+regardless of whether a consumer exists yet — but no screenshot in this
+report shows any visual difference attributable to these two parameters,
+because none currently exists to show. This will only become a meaningful
+test once an energy-field shell or particle system is built.
+
+### FPS check
+
+Measured with active state switches occurring *during* the sample window
+(`EXECUTING` at t=2s, `ERROR` at t=5s, `THINKING` at t=8s, one sample/sec
+throughout): steady **~1950-2060 FPS**, matching section 17's ~1960-2050 FPS
+baseline with no dip during any transition. `set_state()` and the
+`state_changed` signal are trivial-cost (a dictionary lookup and a handful
+of float assignments, once per state change, not per frame) — no
+performance regression, confirmed rather than assumed.
+
+### Overall verdict — does the architecture deliver?
+
+**The core architectural premise is validated; the full 7-personality goal
+is not yet fully delivered, and the gap has an identifiable cause.**
+
+The thing this task actually set out to test — does a shared `EnergyModel`
+produce *one coherent system changing*, with every aspect (geometry,
+palette, camera) moving together in a way that reads as one living object
+rather than independent sliders — is a clear **yes**, demonstrated
+concretely: the transition sequences show real, staggered, organic-feeling
+interpolation across multiple simultaneously-changing aspects, driven by
+nothing more than changing 8 target numbers in one place. That premise does
+not need particles/wisps/rings to be fairly judged; it was fairly judged
+here, using only what exists, and it holds up.
+
+What doesn't yet fully hold up is the *personality* goal specifically:
+`IDLE`, `SUCCESS`, `OFFLINE`, and to a good extent `ERROR` read as genuinely
+distinct, coherent personalities. `LISTENING`, `THINKING`, and `EXECUTING`
+collapse toward a similar "spiky crystalline burst, differing mainly in
+brightness" character, for two identifiable, non-mysterious reasons: (1)
+`core_morph` is not a perceptually linear dial, so any state with
+meaningfully nonzero `core_morph` already looks dramatically more
+crystalline than the numeric value alone suggests; (2) `coherence`'s
+response was measurably weakened by section 17's own warp-range change,
+which specifically undercuts `EXECUTING`'s brief-mandated "high coherence =
+controlled power" mechanism — the single most load-bearing parameter choice
+in the entire state-profile design doesn't come through clearly. Both
+causes are diagnosed, specific, and fixable within the existing core shader
+(not architecture) — this is a tuning problem in section 17's noise/shading
+work, not evidence the shared-parameter architecture itself doesn't work.
+**Recommendation**: before adding any new visual layer, spend one more
+focused pass on exactly these two shader-level issues (core_morph's
+non-linearity, coherence's range), since they're what's actually preventing
+the full personality goal from landing — not the absence of particles or
+wisps.

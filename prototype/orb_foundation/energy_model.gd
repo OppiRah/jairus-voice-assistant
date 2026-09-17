@@ -7,8 +7,20 @@ extends Node
 ## values via Godot's global shader uniform mechanism — nothing downstream
 ## should ever reference this node directly for its shader behavior.
 ##
-## This prototype has no knowledge of Jairus, WebSockets, or state names.
+## This prototype has no knowledge of Jairus, WebSockets, or state names —
+## except for STATE_PROFILES below, which names the 7 real Jairus states only
+## as labels for target-parameter vectors (JAIRUS_ORB_FOUNDATION_PROTOTYPE.md
+## section 18's state-personality validation pass). This still doesn't know
+## about the bridge/WebSocket contract; `set_state()` is called by the debug
+## UI, standing in for where a real state controller would call it later.
 ## Values are driven only by the debug UI (see debug_ui.gd) for now.
+
+## Emitted at the end of set_state(), including when SUCCESS's own timer
+## calls it internally to auto-revert to IDLE — debug_ui.gd listens for this
+## instead of updating its own label/sliders only from the button press that
+## triggered it, so the UI can't go stale after a state change it didn't
+## directly cause.
+signal state_changed(state_name: String)
 
 # Per-parameter smoothing rate (higher = snaps to target faster).
 # Matches JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md section 12's
@@ -19,14 +31,74 @@ const RATE_SLOW := 1.0
 
 const PULSE_DECAY_PER_SEC := 1.8
 
-var target_intensity := 0.35
-var target_activity := 0.25
-var target_turbulence := 0.2
-var target_coherence := 0.6
-var target_core_morph := 0.0
-var target_field_strength := 0.4
-var target_particle_activity := 0.2
-var target_symbol_reveal := 0.0
+# Named target-parameter vectors for the 7 real Jairus states, reasoned
+# against JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md section 13's table and
+# the design brief's per-state personality direction (archived
+# JAIRUS_ORB_VISUAL_DESIGN_DIRECTION.md section 13, which named this exact
+# mechanism `STATE_PROFILES`) — see JAIRUS_ORB_FOUNDATION_PROTOTYPE.md
+# section 18 for the full per-state reasoning. `camera_drift` isn't an
+# EnergyModel/shader parameter; it's applied directly to CameraRig in
+# `set_state()` because the brief explicitly calls out that OFFLINE should
+# read as inactive rather than "IDLE but dimmer," and CameraRig's own
+# activity-based amplitude modulation never reaches zero on its own (a real,
+# separate finding — see the prototype doc).
+const STATE_PROFILES := {
+	"IDLE": {
+		"intensity": 0.3, "activity": 0.2, "turbulence": 0.15, "coherence": 0.65,
+		"core_morph": 0.1, "field_strength": 0.4, "particle_activity": 0.15,
+		"symbol_reveal": 0.0, "camera_drift": true,
+	},
+	"LISTENING": {
+		"intensity": 0.5, "activity": 0.45, "turbulence": 0.25, "coherence": 0.8,
+		"core_morph": 0.25, "field_strength": 0.55, "particle_activity": 0.4,
+		"symbol_reveal": 0.12, "camera_drift": true,
+	},
+	"THINKING": {
+		"intensity": 0.7, "activity": 0.75, "turbulence": 0.75, "coherence": 0.55,
+		"core_morph": 0.55, "field_strength": 0.7, "particle_activity": 0.7,
+		"symbol_reveal": 0.05, "camera_drift": true,
+	},
+	"EXECUTING": {
+		"intensity": 0.95, "activity": 0.9, "turbulence": 0.85, "coherence": 0.9,
+		"core_morph": 0.8, "field_strength": 0.9, "particle_activity": 0.9,
+		"symbol_reveal": 0.3, "camera_drift": true,
+	},
+	"SUCCESS": {
+		"intensity": 0.55, "activity": 0.3, "turbulence": 0.15, "coherence": 0.85,
+		"core_morph": 0.15, "field_strength": 0.45, "particle_activity": 0.35,
+		"symbol_reveal": 0.9, "camera_drift": true,
+	},
+	"ERROR": {
+		"intensity": 0.35, "activity": 0.4, "turbulence": 0.5, "coherence": 0.15,
+		"core_morph": 0.4, "field_strength": 0.3, "particle_activity": 0.25,
+		"symbol_reveal": 0.0, "camera_drift": true,
+	},
+	"OFFLINE": {
+		"intensity": 0.08, "activity": 0.0, "turbulence": 0.0, "coherence": 0.6,
+		"core_morph": 0.0, "field_strength": 0.05, "particle_activity": 0.0,
+		"symbol_reveal": 0.0, "camera_drift": false,
+	},
+}
+
+# SUCCESS is inherently transient (per the brief: "pulse, then settle back
+# toward idle's baseline"), not a state that should be a permanent rest
+# target — this is how long it holds before auto-reverting to IDLE.
+const SUCCESS_HOLD_SEC := 2.0
+
+var current_state_name := "IDLE"
+
+# Cold-launch defaults now equal STATE_PROFILES["IDLE"] exactly, so there's
+# one authoritative definition of "idle" instead of two slightly different
+# ones (this used to be a separate, hand-tuned set of "idle-like" values
+# left over from testing the core shader before STATE_PROFILES existed).
+var target_intensity: float = STATE_PROFILES["IDLE"]["intensity"]
+var target_activity: float = STATE_PROFILES["IDLE"]["activity"]
+var target_turbulence: float = STATE_PROFILES["IDLE"]["turbulence"]
+var target_coherence: float = STATE_PROFILES["IDLE"]["coherence"]
+var target_core_morph: float = STATE_PROFILES["IDLE"]["core_morph"]
+var target_field_strength: float = STATE_PROFILES["IDLE"]["field_strength"]
+var target_particle_activity: float = STATE_PROFILES["IDLE"]["particle_activity"]
+var target_symbol_reveal: float = STATE_PROFILES["IDLE"]["symbol_reveal"]
 
 var current_intensity := target_intensity
 var current_activity := target_activity
@@ -101,3 +173,38 @@ func set_symbol_reveal(v: float) -> void:
 
 func trigger_pulse() -> void:
 	current_pulse = 1.0
+
+
+## Applies a named STATE_PROFILES vector as the new smoothing targets — this
+## does NOT snap current_* values; the existing per-parameter smoothing
+## rates above carry the transition, which is the point being tested (see
+## JAIRUS_ORB_FOUNDATION_PROTOTYPE.md section 18).
+func set_state(state_name: String) -> void:
+	if not STATE_PROFILES.has(state_name):
+		push_warning("EnergyModel.set_state: unknown state %s" % state_name)
+		return
+
+	current_state_name = state_name
+	var profile: Dictionary = STATE_PROFILES[state_name]
+	set_intensity(profile["intensity"])
+	set_activity(profile["activity"])
+	set_turbulence(profile["turbulence"])
+	set_coherence(profile["coherence"])
+	set_core_morph(profile["core_morph"])
+	set_field_strength(profile["field_strength"])
+	set_particle_activity(profile["particle_activity"])
+	set_symbol_reveal(profile["symbol_reveal"])
+
+	var rig := get_node_or_null("/root/Main/CameraRig")
+	if rig:
+		rig.drift_enabled = profile["camera_drift"]
+
+	state_changed.emit(state_name)
+
+	if state_name == "SUCCESS":
+		trigger_pulse()
+		var timer := get_tree().create_timer(SUCCESS_HOLD_SEC)
+		timer.timeout.connect(func():
+			if current_state_name == "SUCCESS":
+				set_state("IDLE")
+		)

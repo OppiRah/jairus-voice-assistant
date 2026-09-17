@@ -45,19 +45,19 @@ anti_aliasing/quality/use_debanding=false
 
 energy_intensity={
 "type": "float",
-"value": 0.35
+"value": 0.3
 }
 energy_activity={
 "type": "float",
-"value": 0.25
+"value": 0.2
 }
 energy_turbulence={
 "type": "float",
-"value": 0.2
+"value": 0.15
 }
 energy_coherence={
 "type": "float",
-"value": 0.6
+"value": 0.65
 }
 energy_pulse={
 "type": "float",
@@ -65,7 +65,7 @@ energy_pulse={
 }
 energy_core_morph={
 "type": "float",
-"value": 0.0
+"value": 0.1
 }
 energy_field_strength={
 "type": "float",
@@ -73,7 +73,7 @@ energy_field_strength={
 }
 energy_particle_activity={
 "type": "float",
-"value": 0.2
+"value": 0.15
 }
 energy_symbol_reveal={
 "type": "float",
