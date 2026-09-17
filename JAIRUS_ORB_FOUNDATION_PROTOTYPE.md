@@ -1358,3 +1358,243 @@ shells at step 5, then particle populations at step 6) can build on
 Candidate B's hero-ribbon technique with confidence; any future stochastic
 secondary-wisp work should route around `trail_enabled` specifically, per
 the root-cause finding above.
+
+---
+
+## 21. Structural lattice + energy-field shells (section 19 step 5)
+
+Per `JAIRUS_ORB_VFX_TECHNICAL_ARCHITECTURE.md` section 19's development
+order, step 5 is "**Structural lattice + energy-field shells**, checked
+immediately against the overdraw budget from §16/§18" — the step right
+after the wisp technique decision (section 20 above), before particle
+populations (step 6).
+
+### What the doc actually specifies for each component (cited)
+
+**Structural Lattice** — section 3: "thin rings/curves establishing the
+orbital silhouette." Section 4's technique table: `Path3D`/`Curve3D` +
+`Curve3D.tessellate()`-generated mesh (tube/ribbon), **or** "a small
+hand-placed `MeshInstance3D` torus/arc set" — both named as equally valid;
+"thin, elegant, curve-driven shapes read as 'orbital,' not mechanical."
+Section 6's concrete scene tree makes this exactly 2 nodes: `RingA` +
+`RingB`, "built once from a Curve3D tessellation."
+
+**Energy Field** — section 3: "the layered translucent 'atmosphere'
+volume(s) immediately around the core." Section 4: "2-3 layered translucent
+shells (`MeshInstance3D` + alpha-blend shader, Fresnel-driven falloff)...
+Only 2-3 shells, kept small and non-intersecting where possible... shell
+count must stay low." Section 6 concretizes this to exactly 2: `ShellInner`
++ `ShellOuter`. Section 7 names the actual shader file and its design:
+"`energy_shell.gdshader` — fragment-only (or very light vertex noise),
+alpha-blended, Fresnel-heavy, driven by `field_strength`."
+
+**No numeric overdraw threshold exists anywhere in the document.** Section
+16 ranks "overdraw from layered transparency" as the #1 performance risk
+and says to "measure early... with Godot's built-in profiler/monitors,"
+section 18's risk register lists the same risk with mitigation "enforce
+the small fixed shell count rule from the start," and section 5 calls the
+shell-count ceiling "a hard ceiling... not a stylistic preference" —
+but the actual stated budget is qualitative (small, fixed shell count),
+never a specific frame-time or fill-rate number. This pass measures against
+that qualitative rule, not a fabricated numeric one.
+
+**A real, load-bearing nuance from section 2, checked before building**:
+"Silhouette: compact hybrid sphere/orbital form, symmetrical at rest;
+asymmetry is a function of transient energy behavior, not base geometry."
+This governs both components in this pass. It's a deliberate difference
+from the archived V1 project's own later fix (verified in
+`archive/orb_v1/docs/ORB_CONCEPT_GAP_ANALYSIS.md`: "4 equally bright
+concentric shells inherently read as 4 equally-visible nested rings"
+because only *transform* varied; the V1 fix broke ring/shell symmetry into
+segmented, partial-arc, gapped geometry). This document's own design
+interpretation supersedes that older fix for this project: both the
+lattice rings and the energy-field shells stay symmetrical/complete
+geometry here, differentiated from each other through *material response*
+(Fresnel sharpness, opacity, which `EnergyModel` parameters each leans on)
+rather than through broken geometry.
+
+### What was built
+
+- `structural_lattice.gd` — 2 `TorusMesh` rings (`RingA`/`RingB`), a stock
+  Godot primitive (section 4 explicitly allows "a small hand-placed
+  `MeshInstance3D` torus/arc set" as equivalent to hand-sweeping a
+  `Curve3D` tube — no reason to hand-build geometry a stock node already
+  provides). Differentiated via a small single-axis tilt each and
+  `lattice_ring.gdshader`'s `activity_weight` (RingA leans toward a steady
+  baseline brightness; RingB leans toward `energy_activity`/`energy_intensity`),
+  not via gapped/segmented geometry.
+- `lattice_ring.gdshader` — thin Fresnel-rim emissive ring, reads
+  `energy_activity`/`energy_intensity` global uniforms directly (pure
+  shader consumer, zero per-frame script coupling, matching Candidate B's
+  wisp integration pattern from section 20).
+- `energy_field.gd` — 2 `SphereMesh` shells (`ShellInner`/`ShellOuter`,
+  stock primitive, bumped vertex density for smooth noise), radii 1.45 and
+  1.85 (outside the core's ~1.34 max displaced radius, non-overlapping with
+  each other).
+- `energy_shell.gdshader` — light vertex noise (reusing
+  `energy_common.gdshaderinc`'s existing `domain_warped_fbm_coarse`, not a
+  second bespoke noise scheme, and far below `core.gdshader`'s displacement
+  amplitude — an atmosphere, not a second core) so the boundary isn't a
+  mathematically perfect sphere, per the archived design-direction doc's
+  explicit complaint about that read. Fresnel-heavy, alpha-blended,
+  `field_strength`-driven per section 7. `ShellInner`/`ShellOuter` use
+  different `fresnel_power` (5.5 vs 2.2), `base_alpha` (0.22 vs 0.12), and
+  `intensity_weight` (0.75 vs 0.2, how much each leans on
+  `intensity`/`turbulence` vs. `field_strength`/`coherence`) — built
+  deliberately against the V1 failure mode: the two shells' brightness
+  ratio actually shifts across states instead of staying two
+  proportionally-scaled copies of the same signal.
+- Isolated test scenes (`lattice_test.tscn`, `shells_test.tscn`,
+  `full_scene_test.tscn`, `core_baseline_test.tscn`), each reusing
+  `main.tscn`'s exact `Core`/`CameraRig`/`KeyLight`/`WorldEnvironment` setup
+  and the existing `debug_ui.gd` harness unmodified, same pattern as
+  section 20's wisp comparison scenes.
+- `overdraw_probe.gd` — a new, small, additive measurement tool (parallel
+  to `perf_monitor.gd`'s existing role): sets
+  `Viewport.debug_draw = DEBUG_DRAW_OVERDRAW` (a real, documented Godot
+  rendering mode that additively tints each pixel by how many
+  transparent/overlapping draws touched it) and samples the resulting
+  image's average brightness as a real, comparable-across-scenes overdraw
+  number — not FPS, per this task's explicit instruction not to treat FPS
+  as a transparency-cost proxy.
+
+Neither touches `core.gdshader`, `energy_common.gdshaderinc`,
+`STATE_PROFILES`, `camera_rig.gd`/`debug_ui.gd`/`perf_monitor.gd`'s
+existing logic, or Candidate B's wisp system (`wisp_system_b.gd`/
+`wisp_hero_ribbon.gdshader`) — confirmed via `git diff --stat` against all
+of those paths showing zero changes after this pass.
+
+### Real mistakes this pass made and fixed, with screenshot evidence (reported honestly, not smoothed over)
+
+Two genuine bugs were caught by real screenshots during this pass, not
+assumed away:
+
+1. **Ring orientation.** First attempt tilted the rings only slightly from
+   what was assumed to be an edge-on default — the resulting screenshot
+   showed both rings as thin diagonal lines crossing the core, not
+   recognizable halos. An isolated diagnostic (opaque high-contrast
+   placeholder shader, no other geometry) proved the opposite: `TorusMesh`'s
+   *default* orientation already faces this scene's camera; a large
+   "correction" toward 90 degrees actually turned a working ring into a
+   genuinely edge-on, invisible one. Root cause of the *original* thin-line
+   look turned out to be radius, not orientation (next point).
+2. **Additive blending vs. this project's transparent window.** Both
+   shaders were first written with `render_mode blend_add` for its
+   order-independent-transparency property. A real screenshot of an
+   isolated scene (rings only, zero opaque geometry) rendered **completely
+   blank** despite verified-correct geometry — this project's per-pixel-
+   transparent viewport writes near-zero alpha wherever *only* additive
+   geometry covers a pixel, so the rings were only ever visible where they
+   happened to overlap the opaque core, never against plain background.
+   Fixed by switching both shaders to `render_mode blend_mix`, matching
+   `wisp_hero_ribbon.gdshader`'s already-proven pattern from section 20.
+
+Both fixes are documented in-line in `structural_lattice.gd` and the two
+shader files' own comments, not just here, so a future pass doesn't
+re-discover the same failure modes from scratch.
+
+### Stage 1 — lattice alone, shells alone (static test, core visible)
+
+**Lattice**: real screenshot (`EXECUTING`, both with and without the debug
+panel) shows two clearly distinct elliptical ring halos wrapping the core
+at different apparent angles, dim relative to the core's own emission,
+reading as intentional orbital structure — not competing with the core.
+
+**Shells**: real screenshot shows two distinct Fresnel-rim halos at
+different radii around the core immediately, no orientation issues (a
+sphere has no meaningful "default orientation" problem the way a torus
+does) — inner shell reads as a tighter, brighter rim; outer shell reads as
+a softer, dimmer, wider halo. This is the falloff-gradient differentiation
+`energy_shell.gdshader` was built for, not two equally-bright nested
+copies — confirmed visually, not just by the parameter values used.
+
+### Stage 2/3 — overdraw check (real numbers, Viewport overdraw debug mode, not FPS)
+
+Measured with `overdraw_probe.gd`'s `DEBUG_DRAW_OVERDRAW` average-brightness
+proxy, same camera/state (`EXECUTING`) across four scenes:
+
+| Scene | Avg. overdraw brightness | Relative to core baseline |
+|---|---|---|
+| Core only (`core_baseline_test.tscn`) | 0.0469 | 1.0x (reference) |
+| Lattice + core (`lattice_test.tscn`) | 0.0979 | ~2.1x |
+| Shells + core (`shells_test.tscn`) | 0.2661 | ~5.7x |
+| Full combined (core+wisps+lattice+shells, `full_scene_test.tscn`) | 0.2684 | ~5.7x |
+
+Honest reads on these numbers:
+
+- **The energy-field shells are overwhelmingly the dominant overdraw
+  cost**, not the lattice and not the wisps. Full-combined overdraw
+  (0.2684) is barely above shells-alone (0.2661) — wisps and lattice
+  together add less than 1% on top of what the two shells already cost.
+  This matches section 16's own prediction exactly ("overdraw from layered
+  transparency... the #1 thing to measure early") and confirms *why*
+  section 5/18's "small fixed shell count" rule is the real lever here,
+  not shell material complexity or the other systems.
+- **No numeric budget exists to compare this against** (confirmed above —
+  the doc never states one), so "within budget" can only be judged against
+  the doc's actual qualitative rule: keep the shell count small and fixed.
+  This pass built exactly 2 shells, matching section 6's own concrete
+  spec, not 3 (section 4's upper bound) and nowhere near V1's discarded
+  4-shell design.
+- The raw `DEBUG_DRAW_OVERDRAW` screenshots themselves are hard to read
+  visually in this project's specific transparent-window setup (the
+  core's own silhouette renders unexpectedly faint in that debug mode,
+  likely a transparent-viewport-specific interaction with Godot's debug
+  draw pipeline, not investigated further since it doesn't affect the
+  numeric proxy's validity) — the *numbers* are the real measurement here,
+  not the pictures, and they're internally consistent and monotonically
+  increasing exactly as expected (core < lattice < shells ≈ full).
+
+### Stage 4 — full combined scene, 3 states, core/wisps not buried
+
+Real screenshots (`IDLE`, `THINKING`, `EXECUTING`, plus one clean/no-panel
+shot at `EXECUTING`) of `full_scene_test.tscn` (core + Candidate B wisps +
+lattice + shells together):
+
+- The core's already-validated per-state distinctness (smooth/calm at
+  `IDLE`, faceted/organized at `THINKING`, maximally spiky/crystalline at
+  `EXECUTING`) remains clearly the dominant visual read in every shot —
+  not diminished or muddied by the new layers.
+- The wisp hero currents (white + gold arcs) remain clearly visible in
+  every shot, distinguishable from the lattice rings by their meandering,
+  non-planar path vs. the rings' clean elliptical shape.
+- Both lattice rings are clearly visible as distinct halos at different
+  angles in every shot.
+- The shells are present but genuinely subtle at this zoom level — they
+  read as a soft brightening right at the core's silhouette edge rather
+  than a distinctly separate visible layer the way the lattice rings and
+  wisps are. This is consistent with their low `base_alpha` (0.22/0.12)
+  and the deliberate "atmosphere, not a second core" design intent, but
+  it's an honest limit worth naming: at this camera distance/zoom, the
+  shells contribute more to overdraw cost (per stage 2/3's numbers) than
+  they contribute to legible visual distinctness. A future pass tuning
+  final shell opacity should know this trade exists.
+
+### Stage 5 — final FPS + overdraw, full combined scene
+
+6-second steady-state soak at `EXECUTING` (`vsync_mode=0`, same measurement
+method as prior passes): **~1250-1275 FPS**, down from wisps-alone's
+~2010-2120 FPS and core-alone's ~1900-2100 FPS baselines (both measured in
+section 20). That's a real, measured ~35-40% FPS reduction from adding the
+lattice+shells — a genuine cost, not nothing, and it lines up with the
+~5.7x overdraw-proxy increase measured above. In absolute terms, ~1250 FPS
+unsynced still leaves roughly a 20x margin over a 60 FPS target, so this is
+not a practical bottleneck *today* — but the relative cost is real and
+should be tracked as particle populations (step 6) add more transparent
+draws on top.
+
+### Verdict
+
+**Within the doc's actual (qualitative) budget, and ready to build on, with
+one honest caveat.** The shell count follows section 6's own concrete
+2-shell spec exactly, not V1's discarded 4-shell pattern; the two shells
+are genuinely differentiated by Fresnel sharpness/opacity/parameter-weighting
+rather than reading as "nested glowing spheres" (confirmed by direct
+screenshot, not assumed); the lattice rings read as intentional orbital
+structure once two real bugs (orientation, additive-blend alpha) were
+found and fixed with evidence, not guessed at. Core distinctness and the
+validated wisp system both remain clearly legible with every new layer
+added. The one real, unresolved trade: shells cost more in measured
+overdraw than they currently contribute in visual legibility at this
+zoom/opacity — worth revisiting `base_alpha` tuning in a future pass, not
+a blocker for building particle populations (step 6) next.
