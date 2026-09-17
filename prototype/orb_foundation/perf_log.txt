@@ -7,12 +7,12 @@ DIAG per_pixel_transparency setting: true
 DIAG transparent_background setting: <null>
 DIAG is_layered_allowed: Windows
 Core mesh: 2562 vertices, 5120 triangles
-FPS=1270.0 frame_ms=10.565 draw_calls=51 primitives=7416 video_mem_mb=24.3
-FPS=1982.0 frame_ms=5.339 draw_calls=51 primitives=7426 video_mem_mb=24.4
-FPS=1996.0 frame_ms=4.825 draw_calls=51 primitives=7426 video_mem_mb=24.3
-FPS=2053.0 frame_ms=4.961 draw_calls=51 primitives=7426 video_mem_mb=24.3
-FPS=1950.0 frame_ms=4.659 draw_calls=51 primitives=7418 video_mem_mb=24.3
-FPS=2007.0 frame_ms=4.400 draw_calls=51 primitives=7418 video_mem_mb=24.3
-FPS=1971.0 frame_ms=5.215 draw_calls=51 primitives=7418 video_mem_mb=24.3
-FPS=1956.0 frame_ms=6.689 draw_calls=51 primitives=7424 video_mem_mb=24.3
-FPS=2061.0 frame_ms=5.025 draw_calls=51 primitives=7424 video_mem_mb=24.3
+FPS=1283.0 frame_ms=10.412 draw_calls=51 primitives=7416 video_mem_mb=24.3
+FPS=2095.0 frame_ms=5.269 draw_calls=51 primitives=7426 video_mem_mb=24.4
+FPS=2103.0 frame_ms=3.873 draw_calls=51 primitives=7426 video_mem_mb=24.3
+FPS=2100.0 frame_ms=3.840 draw_calls=51 primitives=7426 video_mem_mb=24.3
+FPS=2095.0 frame_ms=4.023 draw_calls=51 primitives=7418 video_mem_mb=24.4
+FPS=2083.0 frame_ms=3.747 draw_calls=51 primitives=7418 video_mem_mb=24.3
+FPS=2105.0 frame_ms=3.848 draw_calls=51 primitives=7418 video_mem_mb=24.3
+FPS=2057.0 frame_ms=4.296 draw_calls=51 primitives=7424 video_mem_mb=24.3
+FPS=2088.0 frame_ms=3.922 draw_calls=51 primitives=7424 video_mem_mb=24.3

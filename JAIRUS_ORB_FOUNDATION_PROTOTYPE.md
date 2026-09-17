@@ -968,3 +968,160 @@ focused pass on exactly these two shader-level issues (core_morph's
 non-linearity, coherence's range), since they're what's actually preventing
 the full personality goal from landing — not the absence of particles or
 wisps.
+
+**Both fixed in a follow-up pass — see section 19.**
+
+---
+
+## 19. core_morph linearity + coherence range fix
+
+A targeted shader-math fix for section 18's two diagnosed root causes —
+deliberately not a new exploration. Scoped to `core.gdshader` and
+`energy_common.gdshaderinc` only; the 7 `STATE_PROFILES` values themselves
+were not touched (confirmed via `git diff` — the fix had to make the
+*existing* committed values produce correctly differentiated results, not
+require new values to compensate for a shader bug).
+
+### Fix 1 — core_morph perceptual linearity
+
+**Root cause, confirmed, not just theorized**: `primary = mix(na, nb,
+morph)` mixes a smooth field (`na`, low slope everywhere) against a
+near-binary one (`nb`, the Voronoi F2-F1 edge metric — flat cell interiors,
+razor-sharp slope at a fixed-width crease regardless of blend weight).
+Shading responds to slope, not blended height, so scaling a sharp crease's
+*height* down to 10% by a low `morph` barely softens its *slope* — the
+crease was still just as narrow, just shallower, and a shallow-but-narrow
+crease still throws a hard shading edge. The blend weight was linear; the
+crease's own sharpness was constant. That mismatch is what made a small
+`core_morph` value look disproportionately crystalline.
+
+**Fix**: made the crease's own width a function of `morph`, not just its
+blend weight. A new `voronoi_edge_width_soft` uniform (0.42, versus the
+existing sharp `voronoi_edge_width` at 0.12) is the transition width used
+at `morph = 0`; `effective_edge_width = mix(voronoi_edge_width_soft,
+voronoi_edge_width, morph)` narrows it toward full sharpness only as
+`morph` rises. Now a low `morph` blends in a *genuinely soft* version of
+the Voronoi field (wide transition = low slope), not a permanently-sharp
+feature merely downweighted — both the crease's sharpness and its blend
+weight ramp together.
+
+**Verified at all 5 requested intermediate values** (0.1/0.25/0.5/0.75/1.0),
+coherence held at 1.0 to isolate this fix from Fix 2's own contribution,
+same camera/lighting throughout (real screenshots, `fix_shots/morph_0*.png`):
+0.1 — smooth, no visible facets, matching `IDLE`'s intended read. 0.25 —
+visibly bumpier/craggier, a real step up from 0.1, but nothing like the
+previous pass's near-full spike burst at this value. 0.5 — clearly faceted
+and jagged, a further real step, still short of a full burst. 0.75 — close
+to the full crystalline-burst character. 1.0 — full burst, matching the
+pre-fix endpoint (the fix only changes the *path* between 0 and 1, not the
+endpoints, by construction — `effective_edge_width` converges to the
+original sharp value at `morph = 1`). Honest note: the progression is not
+perfectly linear — the escalation from 0.5 to 0.75 is steeper than from 0.1
+to 0.5 — but the specific bug (an early cliff where 0.25 already looked
+almost as extreme as 0.8) is gone, confirmed at the exact intermediate value
+the previous pass flagged.
+
+### Fix 2 — coherence's own lever
+
+**Root cause, confirmed, not just theorized**: section 17's coarser-
+deformation pass narrowed `warp_amount`'s range (1.4-0.35 → 0.85-0.25) so
+low coherence's domain warp wouldn't dissolve configuration A's larger
+lobes back into mush — a correct, deliberate fix for that specific problem.
+Its side effect: `warp_amount` was coherence's *only* lever, so narrowing
+its range also narrowed how much visual difference coherence alone could
+produce.
+
+**Fix**: gave coherence a second, independent lever rather than re-widening
+`warp_amount` (which would have undone section 17's own fix). A new
+mid-frequency noise layer (`p * 4.5`, distinct from both the geometry-basis
+frequencies and the `turbulence`-driven `fine` layer) is added directly to
+the displacement, scaled by `coherence_noise_amplitude` (0.16) times
+`(1 - coherence)`. High coherence suppresses it to ~0 (clean surface); low
+coherence adds a visibly rough, grainy texture on top of whatever shape is
+underneath, completely independent of `core_morph`, `turbulence`, or
+`warp_amount`. `warp_amount`'s range is untouched — confirmed via `git
+diff` on that specific line.
+
+**Verified against the exact committed `THINKING` (turbulence 0.75,
+coherence 0.55) and `EXECUTING` (turbulence 0.85, coherence 0.9) profiles**,
+no new tuning (`fix_shots/fixed_THINKING.png`, `fixed_EXECUTING.png`):
+there is now a real, visible difference. `EXECUTING` reads as brighter and
+notably *cleaner* — smoother facet faces, less surface grain. `THINKING`
+shows visibly more roughness/grain across its surface from the added noise
+term (at coherence 0.55, `coherence_noise_amplitude * (1-0.55) ≈ 0.072` —
+a modest but genuinely visible contribution). Honest characterization: the
+difference this fix produces is about surface *cleanliness/grain*, not a
+dramatic reorganization of overall silhouette symmetry — a viewer expecting
+"coherence = more symmetric shape" specifically (rather than "coherence =
+smoother surface") might still find the distinction subtle between these
+two particular states. It reads far more clearly between `EXECUTING` and
+`ERROR` (coherence 0.9 vs. 0.15 — near the mechanism's full range), where
+`ERROR`'s surface is unambiguously rough/grainy/disorganized against
+`EXECUTING`'s clean faceted look.
+
+### Full 7-state re-test (same profiles, unchanged)
+
+Real screenshots, `fix_shots/state2_*.png`, same methodology as section 18.
+Direct comparison against section 18's "collapse toward similar" finding:
+
+- **`IDLE`**: smoother, rounder than the pre-fix version (which had a few
+  stray sharp bits from `core_morph = 0.1` no longer being disproportionate).
+- **`LISTENING`**: the clearest before/after of this whole pass. Previously
+  a near-full spike burst at `core_morph = 0.25`; now a rounded, craggy,
+  bumpy silhouette — genuinely distinct in *character*, not just brightness,
+  from both `IDLE` (smoother) and `THINKING` (more jagged) on either side of
+  it.
+- **`THINKING`**: visibly more jagged and rough than `LISTENING`, with the
+  added coherence-noise grain giving it a rougher surface than `LISTENING`'s
+  cleaner rounded bumps — a real, distinguishable middle step.
+- **`EXECUTING`**: brightest, most maximal, and — per Fix 2 — visibly
+  cleaner/more polished-looking than `THINKING`'s grain, not just brighter.
+- **`ERROR`**: now shows a strongly rough, grainy, disorganized surface
+  quality clearly distinct from `EXECUTING`'s clean faceted look — the
+  clearest demonstration of Fix 2 working, and still no red anywhere.
+- **`OFFLINE`** and **`SUCCESS`**: both improved incidentally by Fix 1
+  (less stray sharpness at their low `core_morph` values) without any
+  targeted change; `SUCCESS` in particular now reads as a cleaner, rounder
+  "resolving" shape than before.
+
+**The specific failure this pass exists to fix — `LISTENING`/`THINKING`/
+`EXECUTING` collapsing toward an indistinguishable "spiky burst, differing
+mainly in brightness" — is resolved.** All three now read as genuinely
+different in silhouette character and surface quality, not just brightness:
+rounded-craggy → jagged-rough → bright-clean-burst.
+
+### Transition-quality re-check
+
+Both sequences (`IDLE`→`EXECUTING`, `EXECUTING`→`ERROR`) re-captured;
+spot-checked mid-transition frames still show smooth, staggered,
+organic-feeling interpolation — the fixes changed the shape/texture
+response curves, not the smoothing mechanism, so this was expected to hold
+and did.
+
+### FPS re-check
+
+Measured the same way as section 18 (state switches during the sample
+window): steady **~2060-2105 FPS**, matching or slightly exceeding section
+18's ~1950-2060 FPS baseline (within normal run-to-run variance, not a real
+increase) — no regression from either fix. Both add a handful of extra
+noise samples per vertex (one extra `value_noise3` call for
+`coherence_noise`, evaluated 3x per vertex for the finite-difference
+normal), which this GPU doesn't register at this vertex count.
+
+### Verdict
+
+**The 7 states now read as genuinely distinct, not just at different
+brightness levels — the specific gap section 18 identified is closed.**
+Both fixes targeted exactly the causes already diagnosed (no new
+exploration, no STATE_PROFILES changes), and both are verified with direct
+before/after evidence at the specific values previously flagged as
+problematic, not just at the endpoints. Remaining honest caveats, not
+overclaimed as solved: `core_morph`'s progression, while no longer cliff-y,
+still escalates somewhat faster in its upper half than its lower half; and
+Fix 2's coherence signal reads as "surface cleanliness," which is real and
+visible but subtler between adjacent high-energy states (`THINKING` vs.
+`EXECUTING`) than between states far apart on the coherence range
+(`EXECUTING` vs. `ERROR`). Neither caveat reopens the original "collapse
+toward similar" failure — both are refinements a future pass could pursue,
+not evidence this pass didn't work. The core + shared `EnergyModel`, without
+any additional visual layer, now delivers 7 distinguishable personalities.
