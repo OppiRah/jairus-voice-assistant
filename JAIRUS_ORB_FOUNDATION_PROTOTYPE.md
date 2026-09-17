@@ -117,18 +117,29 @@ not estimated).
 
 ## 6. Morphing approach
 
-`core.gdshader` blends two noise *configurations* by `core_morph`:
-configuration A is a lower-frequency domain-warped fbm (smoother/organic);
-configuration B is the same domain-warped fbm put through a ridge transform
-(`1.0 - abs(n) * 2.0`, higher frequency), intended to read as more
-crystalline/angular. `coherence` scales the domain-warp strength down (more
-coherence = less chaotic warping in *both* configurations), and `turbulence`
-scales a separate, finer secondary noise layer's contribution. The vertex
-shader recomputes the normal via finite differences (sampling the same
-displacement function at two nearby tangent-offset points) rather than
-reusing the sphere's analytic normal, since the analytic normal would light
-the surface as if undisplaced and hide the deformation. See section 11 for
-how this actually looks.
+**Updated in the core redesign pass — see section 17.** `core.gdshader`
+blends two noise *configurations* by `core_morph`. Configuration A is now a
+coarse, low-frequency, **2-octave** fbm (`fbm_coarse`, missing the original
+3-octave `fbm3`'s finest p*4 octave entirely) domain-warped by a narrower
+warp range than before — tuned for "a few large deliberate lobes" rather
+than the original's finer, more uniformly bumpy surface. Configuration B is
+no longer a ridge transform of the same fbm; it's a genuine **cellular/
+Voronoi basis** (`worley3_f1f2`'s F2-F1 edge metric, `domain_warped_voronoi`
+in `energy_common.gdshaderinc`), which produces sharp-creased, flat-ish
+plates instead of the ridge transform's rounded bumps. `coherence` still
+scales the domain-warp strength down (more coherence = less chaotic warping
+in both configurations), though this range was narrowed as part of taming
+configuration A's lobes, with a real side effect — see section 17.
+`turbulence` still scales a separate, finer secondary noise layer's
+contribution. The vertex shader still recomputes the normal via finite
+differences (sampling the same displacement function at two nearby
+tangent-offset points) rather than reusing the sphere's analytic normal,
+since the analytic normal would light the surface as if undisplaced and
+hide the deformation. The palette (maroon vs. white) now reads from its own,
+separate, higher-frequency noise sample rather than from the displacement
+signal itself — see section 17 for why. See section 17 for how this
+actually looks now; section 11 below is the original pass's findings,
+kept for the record.
 
 ## 7. Debug controls
 
@@ -324,7 +335,11 @@ number; it only establishes that today's single-object foundation has large
 headroom before the rest of the visual ecosystem (rings, wisps, particles,
 etc.) gets added.
 
-## 11. Visual observations
+## 11. Visual observations (original pass — superseded by section 17)
+
+**This section describes the original core (pre-redesign). It is kept for
+the historical record. Section 17 has the current state's findings and is
+the one to read for "does the core look right today."**
 
 Evaluated by running the real window (not just the editor viewport) and
 inspecting real screenshots, across several parameter combinations by
@@ -426,14 +441,16 @@ behaved exactly as intended on the first real test.
   today, in this fresh project, with the exact settings the task described
   as already validated. See section 8 — this needs its own follow-up
   investigation before any UI design decision assumes it works.
-- **The core's visual identity.** Neither the default nor the pushed-to-
-  extreme parameter set reads as "alien geometric computational
-  intelligence." It currently reads as either a soft natural object or a
-  cellular/organic-textured object. Per the task's explicit instruction,
-  I'm reporting this as not satisfying the brief rather than describing it
-  as a success.
+- **The core's visual identity (original pass).** Neither the default nor
+  the pushed-to-extreme parameter set reads as "alien geometric
+  computational intelligence." It currently reads as either a soft natural
+  object or a cellular/organic-textured object. Per the task's explicit
+  instruction, I'm reporting this as not satisfying the brief rather than
+  describing it as a success. **Addressed in the redesign pass — see
+  section 17. Substantially improved, not fully resolved either.**
 - The maroon/near-white palette contrast is too weak to read as intended at
-  most tested settings.
+  most tested settings. **Also addressed in section 17** — the fix needed
+  was more involved than a color/power tweak; see that section for why.
 
 ## 15. Recommended next step
 
@@ -450,21 +467,22 @@ gets built on top of this foundation, and they don't block each other:
    update resolves it, or find a different presentation approach that
    doesn't depend on OS-level per-pixel window transparency, before the
    "floating desktop artifact" model is assumed for the real UI design.
-2. **Redesign the core's noise/displacement approach**, not just retune its
-   parameters. The current smooth-value-noise + ridge-transform approach
-   caps out at "natural/organic" or "cellular," never "geometric/alien."
-   Worth trying before the next visual pass: a coarser, lower-frequency
-   *base* deformation (fewer, larger, more deliberate lobes/facets — possibly
-   from a handful of explicit sculpted direction vectors rather than pure
-   noise) with the current fine noise layer demoted to a *detail* pass only;
-   and/or a cellular/Voronoi-style noise basis instead of value noise for
-   configuration B, which tends to produce sharper cell boundaries than the
-   rounded ridge transform used here. Also worth a direct pass: strengthen
-   Fresnel power/weight and darken the base maroon so the palette hierarchy
-   reads at a glance rather than needing close inspection.
+2. ~~Redesign the core's noise/displacement approach~~ — **done, see
+   section 17.** Verdict: substantially better, not fully resolved. Coarser
+   deformation plus a genuine cellular/Voronoi basis (not a ridge transform)
+   produces a real "few large deliberate lobes" / "sharp-creased plates"
+   read, most convincingly once `core_morph` pushes toward the Voronoi
+   configuration — see section 17's stage 2/3 screenshots for the most
+   striking result this prototype has produced. The palette hierarchy now
+   genuinely reads (verified by direct pixel sampling, not just eyeballing a
+   screenshot), but getting there required fixing a masking interaction
+   between the Fresnel rim / specular highlight and a dark ALBEDO, not just
+   a color/power tweak — see section 17 for what actually mattered. Next
+   step here, if there is one: the current look leans "high-contrast
+   dalmatian-spotted crystal shard" rather than "calm alien intelligence at
+   idle, escalating under load" — section 17's recommendation covers this.
 
-Both are scoped smaller than "build the rest of the orb," and either could
-reasonably go first.
+Both were scoped smaller than "build the rest of the orb."
 
 ## 16. Architectural changes I believe are justified
 
@@ -478,3 +496,222 @@ the archived project's own `project.godot` didn't set — future work should
 not assume the archived project's settings file is a complete reference for
 "what makes transparency work," given that this prototype applied its
 settings exactly and transparency still failed.
+
+## 17. Core redesign — second pass (coarser deformation + Voronoi + palette fix)
+
+A follow-up task implemented this document's own section 15 recommendation
+#2: redesign the core's noise/displacement approach rather than retune the
+original's parameters. Strictly scoped to `core.gd`, `core.gdshader`, and
+`energy_common.gdshaderinc` — no window/renderer/transparency settings, no
+`camera_rig.gd`/`debug_ui.gd`/`perf_monitor.gd`, no changes to
+`energy_model.gd`'s parameter architecture. Tested against the opaque/gray
+window background (transparency out of scope for this pass, and not needed
+to judge core geometry/shader quality — confirmed by the archived project's
+own screenshot showing correct core rendering regardless of the window
+background bug).
+
+### A testing gotcha worth recording
+
+Parameter sweeps in this pass initially tried editing `project.godot`'s
+`[shader_globals]` initial values, the way `core.gdshader`'s own tunable
+uniforms are edited. **This does not work for the `energy_*` parameters**:
+`energy_model.gd`'s `_process()` runs from frame 1 and unconditionally
+pushes its own hardcoded `target_*`/`current_*` defaults to the global
+shader uniforms every frame, overwriting whatever `project.godot` set within
+the first frame or two — regardless of what `[shader_globals]` says. Several
+early comparison screenshots in this pass were captured this way and were
+silently testing the *wrong* parameter values (e.g., a "core_morph = 1.0"
+test that actually rendered at the hardcoded default, 0.0). This was caught
+by comparing debug-UI slider positions against intended values, not assumed
+away. The correct way to test a value that isn't the coded default, without
+touching `debug_ui.gd` or `energy_model.gd`'s architecture, is to
+temporarily edit `energy_model.gd`'s `target_*` initializers, capture, then
+revert — the same method this document's own section 11 used originally
+("functionally identical to moving the debug sliders"). Every value in
+`energy_model.gd` was reverted to its original default before this pass
+finished; `git diff` on that file is empty.
+
+### Stage 1 — coarser base deformation alone
+
+Configuration A's frequency dropped (1.6 → 0.85) and switched from `fbm3`
+(3 octaves, up to p*4) to a new `fbm_coarse` (2 octaves, up to p*2,
+weighted 0.7/0.3 toward the lower one) — fewer octaves matters more here
+than frequency alone, since octaves are what add small-scale detail on top
+of the base shape. `displacement_amplitude` raised (0.18 → 0.34) so the
+resulting lobes read as pronounced, and coherence's warp range narrowed
+(1.4-0.35 → 0.85-0.25) so warping doesn't dissolve the now-larger lobes back
+into mush. Result, real screenshot, same camera as the original baseline:
+genuinely fewer, larger, more deliberate-looking bulges/dents versus the
+original's uniform small-bump "marshmallow" texture — a real, visible step
+toward "designed" rather than "natural," though still fundamentally a
+smooth rounded blob, not yet geometric/angular on its own.
+
+### Stage 2 — Voronoi/cellular basis for configuration B
+
+First attempt used Worley noise's F1 (distance to the nearest jittered
+feature point per grid cell) directly as the height field. This failed
+outright — F1 is smooth *within* each cell (a gentle dome, no
+discontinuity), so it rendered as indistinguishable from a plain smooth
+sphere. The standard fix is F2-F1 (distance to the second-nearest minus the
+nearest): this goes to exactly 0 on a cell boundary and rises inside each
+cell, giving flat-ish plates with sharp creases at the seams — the actual
+"crystalline" cue. Getting this to read also needed: `smoothstep` instead of
+a hard multiply+clamp threshold (a hard threshold produces creases narrower
+than this mesh's ~2562-vertex spacing in places, which per-vertex
+displacement geometry can't resolve at all — confirmed the same way the
+palette bug below was, by finding the crease band simply wasn't being hit by
+any vertex); and less domain-warping applied to this configuration than to
+configuration A (heavy warping bends cell boundaries into curves and reads
+as organic again, defeating the point).
+
+With `core_morph` genuinely reaching 1.0 (see the testing-gotcha section —
+earlier attempts at this were silently testing morph=0 and showed nothing
+new), the result is dramatic: sharp, angular, radiating shard/spike
+geometry — a real sea-urchin/shattered-crystal silhouette, the most
+convincingly "alien geometric computational" result this whole prototype
+has produced. Honest caveat: it currently reads as more "shattered crystal
+burst" than the originally-envisioned "few large flat plates" — the F2-F1
+metric's steep local gradient between adjacent cells produces sharp
+*peaks*, not gentle facets, so the character is spikier/more chaotic than
+"deliberate" plates. At default idle energy values this is still what
+renders (see stage 3's screenshot, `core_morph` blended to 0.5) — worth
+tuning down for a calmer idle state in a future pass rather than assumed
+correct as-is.
+
+### Stage 3 — Fresnel + palette tuning, combined with stages 1-2
+
+This took far more than a color/power tweak, and the process is worth
+recording because the wrong culprit was assumed twice before the real one
+was found:
+
+- First hypothesis (wrong): the noise signal driving the palette didn't
+  have enough range. Ruled out by a raw grayscale visualization of the
+  signal, which showed it swinging fully across its range — the palette
+  still didn't show any maroon, so range wasn't the problem.
+- Second finding (real, but not the whole story): the *displacement*
+  signal (`primary`, a mix of na/nb) is unsuitable for driving *per-vertex
+  color* even where it's fine for geometry — nb's Voronoi crease is a thin
+  band that this mesh's vertices mostly don't land inside, so vertex color
+  (unlike vertex-displaced geometry) rarely shows it at all. Fixed by
+  giving the palette its own dedicated, higher-frequency noise sample
+  (`palette_field`, sampled at 2.4x instead of geometry's 0.85x) instead of
+  reading off `na` or `primary` — geometry wants low frequency for "few
+  large forms," palette needs enough spatial frequency that a fixed camera
+  typically sees more than one lobe (a raw grayscale check at low
+  frequency showed the *entire visible hemisphere* landing inside a single
+  lobe from this fixed camera — too few total lobes existed on the sphere
+  at geometry-appropriate frequencies for a typical view to ever see both
+  colors).
+- The actual root cause of "palette never reads," found only after both of
+  the above: **the Fresnel rim's EMISSION and the material's SPECULAR
+  highlight**, not the noise at all. Direct pixel sampling (not eyeballing
+  compressed screenshots) showed literally zero pixels anywhere on the
+  visible surface with red exceeding blue — i.e., the dark maroon ALBEDO
+  was never actually visible in the final pixel color, no matter how the
+  noise was tuned. A diagnostic pass with EMISSION and SPECULAR both
+  zeroed and ROUGHNESS maxed immediately showed a clear maroon/white
+  hierarchy. The mechanism: SPECULAR's dielectric highlight is
+  achromatic — it washes a dark colored ALBEDO toward gray wherever it
+  lands, and the scene's single key light put a broad glossy highlight
+  across much of the visible surface at the original 0.35/0.5
+  ROUGHNESS/SPECULAR. The Fresnel rim's white EMISSION did the same thing
+  by a different route, and even a small fraction of either brought back
+  was enough to erase the maroon again (pixel count went from thousands of
+  red-biased pixels back to zero).
+
+Fix: SPECULAR → 0, ROUGHNESS → 1.0 (fully matte — this scene has no
+reflection-worthy environment anyway), and the Fresnel rim's contribution
+**masked by the palette itself** (`rim_color = color_white * fresnel *
+structure_n`) so it brightens the already-white regions' silhouette without
+bleeding onto the maroon structural regions. `color_maroon` darkened from
+the original (0.28, 0.05, 0.08) but *not* as dark as a mid-iteration attempt
+(0.10, 0.015, 0.03) — that attempt's color was dark enough that its hue
+became imperceptible on its own, before any lighting was even applied;
+(0.20, 0.035, 0.06) survives the reduced EMISSION/SPECULAR budget without
+losing its hue. Verified by direct pixel sampling, not appearance alone:
+thousands of visible pixels with red exceeding blue, versus zero before the
+fix.
+
+Real screenshot result: the palette hierarchy now clearly reads at a
+glance — near-white body, dark maroon (reading as near-black in shadow,
+genuinely warm-toned where lit) at structural creases/lobes, no longer
+"barely visible." Honest caveat: the current character is high-contrast and
+somewhat binary ("dalmatian-spotted" / cut-gemstone-like) rather than a
+softer graceful hierarchy — a legitimate, deliberate-looking result, but a
+different aesthetic than originally envisioned, and one more iteration on
+the contrast curve and patch scale could soften it further if a subtler
+look is wanted. Also incidentally fixed: the original prototype's
+overexposure problem at high intensity/turbulence (see stage 4) — the
+matte, non-additive-emission-heavy material doesn't blow out the same way.
+
+### Stage 4 — parameter responsiveness re-check
+
+Re-verified against the new geometry/material, using the corrected
+`energy_model.gd`-editing method (see the testing-gotcha section):
+
+- **Gold/`symbol_reveal` restraint**: still works exactly as before — small,
+  sparse, warm speckles, never a wash of gold.
+- **High intensity/turbulence/activity push** (0.85/0.9/0.7): no longer
+  overexposes to white the way the original did — the palette hierarchy
+  stayed visible even pushed hard. A genuine improvement, not just a
+  side-effect noted in passing.
+- **Coherence sweep (organized vs. chaotic)**: this is a real regression,
+  reported honestly rather than glossed over. At `core_morph = 0.5`
+  (Voronoi contributing), coherence = 0.05 and coherence = 0.95 produced
+  near-indistinguishable results — the effect that worked clearly in the
+  original prototype is now much weaker. Isolated to config-A-only
+  (`core_morph = 0.0`, matching the original's own test conditions): still
+  weaker than before, though present. The cause is directly traceable to
+  stage 1's own change — narrowing the warp-amount range (1.4-0.35 →
+  0.85-0.25) to keep coherence's warp from dissolving the new, larger
+  lobes also shrank the absolute difference the coherence slider can
+  produce. This is a real trade-off this pass introduced, not a fluke, and
+  is flagged in `core.gdshader`'s own comments at the `warp_amount` line
+  for the next person tuning this.
+
+### Stage 5 — performance re-measurement
+
+Measured the same way as the original baseline (`perf_monitor.gd`,
+`perf_log.txt`, real windowed run at default parameters, not estimated):
+steady-state **~1960-2050 FPS (~4.4-5.6 ms/frame)**, essentially unchanged
+from the original's ~1800-2000 FPS baseline despite the added Voronoi
+noise (a 27-cell neighborhood search per sample) and the extra dedicated
+palette noise sample. This GPU has enormous headroom at 2562 vertices; the
+extra noise cost is not currently a bottleneck. No conclusions about the
+eventual full orb's performance should be drawn from this — same caveat as
+the original baseline.
+
+### Honest overall verdict
+
+**Better, not solved.** Measured against the original "looks like a blob"
+finding: the default/idle state (screenshots in this section, `core_morph`
+near 0) now shows genuinely fewer, larger, more deliberate lobes with a
+clearly-reading maroon/white hierarchy — a real, verified improvement, not
+a relabeled version of the same problem. Pushed toward the Voronoi
+configuration (`core_morph` toward 1), the result is the most convincingly
+"alien geometric computational" shape this prototype has produced — sharp,
+angular, radiating shard geometry, not organic at all. But: the Voronoi
+result is spikier/more chaotic than the "few large deliberate plates"
+originally envisioned, the palette's current character is high-contrast and
+somewhat binary rather than a graceful hierarchy, and the coherence
+parameter's organized-vs-chaotic effect is now noticeably weaker than
+before, a real trade-off from taming configuration A's warp range. None of
+these are "still looks like a blob" — that finding is resolved — but none
+of them are "fully realized as designed" either.
+
+### Updated recommendation
+
+Good enough to keep building on for further iteration, not good enough to
+treat as final. Before adding rings/wisps/particles on top: (1) tune the
+Voronoi configuration's amplitude down for idle states specifically (scale
+displacement by `activity`/`intensity` rather than a flat constant) so
+"calm" doesn't look this dramatically spiky — currently the idle default
+already shows meaningful crystalline character, which may be desirable but
+should be a deliberate choice, not an accident of the current constants;
+(2) either accept the current palette's high-contrast "dalmatian" character
+as the intended look, or spend one more pass softening the contrast
+curve/patch scale if a subtler hierarchy is wanted; (3) decide whether
+coherence's weakened effect needs recovering (e.g., a separate, wider warp
+range applied only where it doesn't threaten configuration A's lobe
+coarseness) or is an acceptable trade-off given the Voronoi configuration's
+own strong organized/chaotic character now covers some of the same ground.
