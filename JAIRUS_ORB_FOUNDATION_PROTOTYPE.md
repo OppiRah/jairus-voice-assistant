@@ -1653,32 +1653,30 @@ Core's surface... Continuous trickle + burst on `THINKING`/`EXECUTING`...
 Sub-emitter relationship means this population's own base emission should
 be disabled by design, not left as a leftover default **[DOC]**."
 
-**HONEST DEVIATION, not silently substituted**: the literal two-node
-sub-emitter pair (a spawner `GPUParticles3D` with no `draw_pass` of its
-own, driving a child via `GPUParticles3D.sub_emitter` +
-`ParticleProcessMaterial.sub_emitter_mode = SUB_EMITTER_AT_END`, the real
-documented Godot 4 mechanism) was built and tested **four times**, using
-materials already confirmed working elsewhere in this same pass
-(micro's fixed-alpha fix, and a fully opaque no-transparency material
-that rendered correctly in a standalone non-sub-emitted diagnostic) — all
-four rendered completely blank despite confirmed real geometry
-submission. Transparency, blend mode, and `local_coords` were each ruled
-out by direct test. **Root cause not found within this pass's time
-budget** (5 populations to cover in one unsupervised run) — this is a
-real, unresolved technical gap, flagged here rather than declared solved.
+**Originally an honest, flagged substitution — since root-caused, fixed,
+and resolved in a dedicated follow-up pass (see section 23).** The
+literal two-node sub-emitter pair (spawner `GPUParticles3D` with no
+`draw_pass`, driving a visible child via `GPUParticles3D.sub_emitter` +
+`ParticleProcessMaterial.sub_emitter_mode = SUB_EMITTER_AT_END`) now
+works correctly: the cause was `spawner.lifetime` exceeding ~1.5 seconds
+(the original value was 1.6), confirmed via isolated diagnostic and fixed
+by reducing it to 1.4. This is **not** the same class of limitation as
+the wisp pass's `trail_enabled` failure (that was a genuine, confirmed
+Forward Mobile compute-shader gap) — sub-emission itself works fine under
+this project's renderer; the original code just used a parameter value
+that happened to fall on the wrong side of an undocumented, narrow
+Godot-internal threshold. Full investigation, method, and fix in section
+23.
 
-**Substituted**: a single continuously-emitting `GPUParticles3D` at the
-core's surface, each particle itself a spark rather than spawned via
-literal sub-emission — same spatial intent (sparks from the core's
-surface) and same state-reactivity, without the broken mechanism. A
-future pass with more time budget should revisit the literal
-`sub_emitter` API before treating this substitution as final.
+**Screenshot**: real, small pale specks visible around the core (clearest
+in an isolated core-hidden capture) at `EXECUTING`, reading as sparks
+originating from the surface, now via the literal sub-emitter mechanism
+the doc specifies.
 
-**Screenshot**: real, small pale specks visible right at the core's
-silhouette edge at `EXECUTING`, reading as sparks originating from the
-surface.
-
-**Cost impact**: overdraw 0.26866 → 0.26888 (+0.08%). Negligible.
+**Cost impact**: overdraw 0.26866 → 0.26888 (+0.08%) at the time this
+population was first added; re-measured after the section 23 fix at
+0.26875 on the full combined scene — no regression, within normal
+run-to-run measurement noise.
 
 ### 3. Orbital — `orbital_particles.gd`
 
@@ -1839,19 +1837,91 @@ somehow making the scene faster. The fair, controlled comparison is
 each population was added — that consistency is the real finding, not
 either session's absolute number in isolation.
 
+---
+
+## 23. Core sparks sub-emitter root-cause + fix
+
+A dedicated follow-up to section 22's one flagged gap: the core sparks
+population's doc-specified two-node `sub_emitter` pair rendered completely
+blank across four isolated tests during that pass, substituted at the
+time with a single continuously-emitting `GPUParticles3D`. This pass
+root-caused and fixed it. Scoped to `core_sparks.gd` only — no other
+population, no `EnergyModel`, no shader files touched.
+
+### Ruling out the strongest hypothesis first
+
+Section 20's wisp pass already confirmed a real, hard limitation of this
+project: Forward Mobile's missing compute-shader support broke
+`trail_enabled`. Given that precedent, the obvious first hypothesis was
+that sub-emission hit the same renderer gap. Checked directly, not
+assumed: a minimal isolated scene (a bare camera plus two
+`GPUParticles3D` nodes wired via `sub_emitter`, nothing else from the
+real project) rendered sub-emitted particles correctly under this same
+Forward Mobile renderer. This hypothesis is ruled out — sub-emission
+itself works fine here.
+
+### Isolating the real variable
+
+With the mechanism confirmed working in isolation, real scene structure
+was re-added incrementally (`WorldEnvironment`, `CameraRig`, the key
+light, the hidden `Core`) to check for interference from another node —
+none of it broke sub-emission. Reproducing the exact original failing
+configuration, otherwise unchanged, did reproduce the blank-render
+failure, confirming the isolated-success/original-failure gap was a real
+parameter difference, not an environment difference.
+
+A binary search across that configuration's parameters isolated the
+cause to a single variable: `spawner.lifetime`. 1.5 seconds and under
+renders correctly; 1.6 seconds and above (the original pass's value)
+renders blank. Other candidates were tested and ruled out directly, not
+assumed away: capture timing, `visibility_aabb` on either node, particle
+capacity overflow, and the spawner/burst lifetime ratio. The exact
+internal Godot mechanism behind this specific threshold was not
+identified — this is reported as an empirically confirmed, reproducible
+fix, not a fully explained one.
+
+### Fix
+
+`spawner.lifetime` reduced from 1.6 to 1.4 — a safety margin under the
+confirmed 1.5s ceiling, not the ceiling value itself. The rest of
+`core_sparks.gd` was restructured from the single-emitter substitution
+back into the doc's own two-node split: a `Spawner` `GPUParticles3D`
+with no `draw_pass` of its own (per section 8's "base emission should be
+disabled by design" instruction) driving a visible `SparkBurst` child via
+`sub_emitter` + `sub_emitter_mode = SUB_EMITTER_AT_END`.
+
+### Verification
+
+Real screenshot at `EXECUTING`, core hidden for clarity, shows sparks
+originating from the surface via the literal sub-emitter mechanism,
+matching the doc's specified visual intent. Overdraw re-measured on the
+full combined scene at 0.26875 — no regression from the substitution's
+previously-measured 0.26888 (within normal run-to-run noise, consistent
+with section 22's own finding that all 5 populations' costs are dominated
+by tiny per-particle draws, not by which emission mechanism produces
+them).
+
+### Verdict
+
+**Resolved, not merely worked around.** The doc's literally-specified
+sub-emitter technique now works exactly as designed, replacing the
+honest substitution section 22 originally flagged. This is a different
+class of finding than the wisp pass's `trail_enabled` gap: that one is a
+genuine, confirmed renderer limitation with no fix available under
+Forward Mobile; this one was a parameter value that happened to fall on
+the wrong side of an undocumented, narrow threshold, fixed by changing
+that one value.
+
 ### Verdict
 
 **All 5 populations built, working (four exactly per the doc's literal
-technique, one — core sparks — via a documented, honest substitution),
-and within budget.** Overdraw growth from adding an entire particle
-architecture on top of the already-shell-dominated budget was measured at
-~0.3%, not a meaningful new cost driver. Every population is verified
-driven by the existing `EnergyModel` parameters (no second parameter
-source introduced anywhere across all 5). The core, wisps, lattice, and
-shells all remain clearly legible across all 7 states with the full
-particle architecture running. `git diff --stat` confirms zero changes
-to every protected file/system across all 5 commits. The one real,
-unresolved item: core sparks' literal `sub_emitter` mechanism doesn't
-render in this project for a cause not found within this pass's time
-budget — worth a dedicated, better-resourced investigation before
-treating the current single-emitter substitution as final.
+technique; core sparks originally via a documented, honest substitution,
+since root-caused and fixed — see section 23), and within budget.**
+Overdraw growth from adding an entire particle architecture on top of the
+already-shell-dominated budget was measured at ~0.3%, not a meaningful
+new cost driver. Every population is verified driven by the existing
+`EnergyModel` parameters (no second parameter source introduced anywhere
+across all 5). The core, wisps, lattice, and shells all remain clearly
+legible across all 7 states with the full particle architecture running.
+`git diff --stat` confirms zero changes to every protected file/system
+across all 5 commits.
